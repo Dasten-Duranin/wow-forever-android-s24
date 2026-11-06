@@ -124,6 +124,11 @@ class CrashHandler(
             }
 
             File(crashFileDir, "pluvia_crash_$timestamp.txt").writeText(crashReport)
+            // Also drop a copy in Download/ so it can be opened without adb.
+            runCatching {
+                val downloads = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+                File(downloads, "wowforever_crash_$timestamp.txt").writeText(crashReport)
+            }
 
             cleanupOldCrashFiles()
         } catch (e: Exception) {
