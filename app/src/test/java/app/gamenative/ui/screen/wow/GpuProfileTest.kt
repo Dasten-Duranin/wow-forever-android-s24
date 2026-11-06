@@ -58,4 +58,20 @@ class GpuProfileTest {
         assertFalse(isAdreno8xx("Adreno (TM) 750", "SM8650", "pineapple"))
         assertFalse(isAdreno8xx("Adreno (TM) 735", "SM7675", "qcom"))
     }
+
+    @Test
+    fun exynos2400IsXclipse() {
+        assertTrue(isXclipse940("s5e9945", "s5e9945", "s5e9945"))
+        assertTrue(isXclipse940("", "s5e9945", ""))
+        assertFalse(isXclipse940("SM8650", "pineapple", "pineapple"))
+        assertFalse(isXclipse940("s5e9925", "s5e9925", "s5e9925"))
+    }
+
+    @Test
+    fun xclipseUsesRadvWithoutBcnEmulation() {
+        assertEquals(
+            "version=RADV-Xclipse-xd-4f88558,adrenotoolsTurnip=1,resourceType=buffer,bcnEmulation=none,quality=high",
+            graphicsDriverConfig(GpuProfile.XCLIPSE),
+        )
+    }
 }

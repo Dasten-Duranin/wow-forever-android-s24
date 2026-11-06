@@ -886,6 +886,7 @@ internal fun Throwable.isPermissionDenied() =
 
 private const val DEFAULT_DRIVER = "Turnip-WoW-scheduler-test"
 private const val ADRENO_8XX_DRIVER = "Turnip-V32-RP6sched"
+private const val XCLIPSE_DRIVER = "RADV-Xclipse-xd-4f88558"
 
 private const val PROTON_VERSION = "proton-11.0-90624-arm64ec"
 private const val DXVK_VERSION = "2.4.1-wow-aarch64-test"
@@ -898,6 +899,8 @@ internal data class GpuProfile(
     val edition: String,
     /** MB of video memory the game is told it has; 0 leaves it to the driver. */
     val maxDeviceMemory: Int = 0,
+    /** Samsung Xclipse (AMD RDNA) GPU, driven by the community RADV build instead of Turnip. */
+    val isXclipse: Boolean = false,
 ) {
     companion object {
         val ADRENO_740 = GpuProfile(DEFAULT_DRIVER, "noconform", "1920x1080", "Adreno 740", "Snapdragon 8 Series / Adreno 740")
@@ -909,7 +912,15 @@ internal data class GpuProfile(
          */
         val QUEST = GpuProfile("System", "", "1280x720", "Meta Quest 3", "Meta Quest 3 / XR2 Gen 2", maxDeviceMemory = 1536)
 
+        /**
+         * Exynos 2400 / 2400e (Galaxy S24, S24+, S24 FE outside the US): Samsung's Xclipse 940. Turnip can't
+         * drive it, so it uses the community RADV build (aaditya-v-more/xclipse-driver). Validated in-world on
+         * a European Galaxy S24.
+         */
+        val XCLIPSE = GpuProfile(XCLIPSE_DRIVER, "", "1280x720", "Xclipse 940", "Exynos 2400 / Xclipse 940", isXclipse = true)
+
         fun detect(context: Context) = when {
+            isXclipse940(if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Build.SOC_MODEL else "", Build.HARDWARE, Build.BOARD) -> XCLIPSE
             isMetaQuest3(Build.MANUFACTURER, Build.MODEL, if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Build.SOC_MODEL else "") -> QUEST
             isAdreno8xxDevice(context) -> ADRENO_8XX
             else -> ADRENO_740
@@ -929,7 +940,8 @@ internal data class GpuProfile(
  * The pixel count stays the same as [baseSize], so GPU cost matches the 16:9 default.
  */
 internal fun graphicsDriverConfig(gpu: GpuProfile): String =
-    "version=${gpu.driver},adrenotoolsTurnip=1,resourceType=buffer,bcnEmulation=auto,quality=high" +
+    // RADV samples BC textures natively; GameNative's BCn emulation renders them black and crashes loads on the 940.
+    "version=${gpu.driver},adrenotoolsTurnip=1,resourceType=buffer,bcnEmulation=${if (gpu.isXclipse) "none" else "auto"},quality=high" +
         (if (gpu.maxDeviceMemory > 0) ",maxDeviceMemory=${gpu.maxDeviceMemory}" else "")
 
 /**
@@ -941,6 +953,10 @@ internal fun isAdreno8xx(renderer: String, socModel: String, hardware: String): 
     Regex("""adreno\D*8\d\d""", RegexOption.IGNORE_CASE).containsMatchIn(renderer) ||
         listOf("SM8735", "SM8750", "SM8845", "SM8850").any { socModel.contains(it, ignoreCase = true) } ||
         hardware.contains("sun", ignoreCase = true)
+
+/** Exynos 2400 / 2400e ("s5e9945"), whose GPU is the Xclipse 940. */
+internal fun isXclipse940(socModel: String, hardware: String, board: String): Boolean =
+    listOf(socModel, hardware, board).any { it.contains("s5e9945", ignoreCase = true) }
 
 /** Meta Quest 3 or 3S: Oculus hardware with the Snapdragon XR2 Gen 2 (SXR2230P). */
 internal fun isMetaQuest3(manufacturer: String, model: String, socModel: String): Boolean =
@@ -1037,7 +1053,12 @@ internal fun prepareLaunch(
 }
 
 private fun containerConfig(gameRoot: File, product: WowProduct, gpu: GpuProfile, screenSize: String): JSONObject {
-    val samsungEnv = if (Build.MANUFACTURER.equals("samsung", ignoreCase = true)) " FD_DEV_FEATURES=enable_tp_ubwc_flag_hint=1" else ""
+    val samsungEnv = when {
+        // DXVK faults at startup on RADV Xclipse with descriptor buffers enabled.
+        gpu.isXclipse -> " DXVK_CONFIG=dxvk.enableDescriptorBuffer=False"
+        Build.MANUFACTURER.equals("samsung", ignoreCase = true) -> " FD_DEV_FEATURES=enable_tp_ubwc_flag_hint=1"
+        else -> ""
+    }
     val envVars = "WRAPPER_MAX_IMAGE_COUNT=0 ZINK_DESCRIPTORS=lazy ZINK_DEBUG=compact,deck_emu MESA_SHADER_CACHE_DISABLE=false MESA_SHADER_CACHE_MAX_SIZE=512MB mesa_glthread=true WINEESYNC=0 MESA_VK_WSI_PRESENT_MODE=mailbox${if (gpu.tuDebug.isNotEmpty()) " TU_DEBUG=${gpu.tuDebug}" else ""} VKD3D_SHADER_MODEL=6_0 PULSE_LATENCY_MSEC=144$samsungEnv"
     return JSONObject().apply {
         put("id", CONTAINER_ID)
@@ -1213,6 +1234,7 @@ private val RESOLUTION_KEYS = listOf("gxFullscreenResolution", "gxWindowedResolu
 private fun installBundledComponents(context: Context, onStatus: (String) -> Unit) {
     installDriver(context, DEFAULT_DRIVER, "turnip-wow-scheduler-test.zip", onStatus)
     installDriver(context, ADRENO_8XX_DRIVER, "turnip-V32-RP6sched.zip", onStatus)
+    installDriver(context, XCLIPSE_DRIVER, "radv-xclipse-26.3.0-devel-xd-4f88558.zip", onStatus)
 
     val protonDir = File(ImageFs.getSharedProtonDir(context), PROTON_VERSION)
     if (!File(protonDir, "profile.json").exists() || !File(protonDir, "bin/wine").exists()) {
