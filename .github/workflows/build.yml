@@ -22,9 +22,9 @@ jobs:
       - name: Build
         run: |
           echo "sdk.dir=$ANDROID_HOME" > local.properties
-          ./gradlew --no-daemon assembleModernRelease
+          ./gradlew --no-daemon assembleModernDebug
 
       - uses: actions/upload-artifact@v4
         with:
           name: WoW-Forever-apk
-          path: app/build/outputs/apk/modern/release/*.apk
+          path: app/build/outputs/apk/modern/debug/*.apk
