@@ -1137,14 +1137,12 @@ private data class GpuProfile(
 
         // Exynos 2400 / 2400e (Galaxy S24, S24+, S24 FE): Samsung's Xclipse 940, an AMD RDNA3 GPU.
         // Turnip can't drive it, so these devices use the community RADV build for the 940.
+        // Uses build properties first: GPUInformation's native renderer probe (isAdrenoGPU) crashes on Xclipse.
         private fun isXclipseDevice(context: Context): Boolean {
-            if (GPUInformation.isAdrenoGPU(context)) return false
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && Build.SOC_MODEL.contains("s5e9945", ignoreCase = true)) return true
+            if (Build.HARDWARE.contains("s5e9945", ignoreCase = true) || Build.BOARD.contains("s5e9945", ignoreCase = true)) return true
             val renderer = runCatching { GPUInformation.getRenderer(context) }.getOrNull().orEmpty()
-            if (renderer.contains("Xclipse 940", ignoreCase = true)) return true
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                return Build.SOC_MODEL.contains("s5e9945", ignoreCase = true)
-            }
-            return false
+            return renderer.contains("Xclipse", ignoreCase = true)
         }
 
         private fun isAdreno8xxDevice(context: Context): Boolean {
