@@ -1113,15 +1113,38 @@ private fun Throwable.isPermissionDenied() =
 
 private const val DEFAULT_DRIVER = "Turnip-WoW-scheduler-test"
 private const val ADRENO_8XX_DRIVER = "Turnip-V32-RP6sched"
+private const val XCLIPSE_DRIVER = "RADV-Xclipse-xd-4f88558"
 private const val PROTON_VERSION = "proton-11.0-90624-arm64ec"
 private const val DXVK_VERSION = "2.4.1-wow-aarch64-test"
 
-private data class GpuProfile(val driver: String, val tuDebug: String, val screenSize: String, val label: String, val edition: String) {
+private data class GpuProfile(
+    val driver: String,
+    val tuDebug: String,
+    val screenSize: String,
+    val label: String,
+    val edition: String,
+    val isXclipse: Boolean = false,
+) {
     companion object {
-        fun detect(context: Context) = if (isAdreno8xxDevice(context)) {
-            GpuProfile(ADRENO_8XX_DRIVER, "noconform,sysmem", "1280x720", "Adreno 8xx", "Snapdragon 8 Elite / Adreno 8xx")
-        } else {
-            GpuProfile(DEFAULT_DRIVER, "noconform", "1920x1080", "Adreno 740", "Snapdragon 8 Series / Adreno 740")
+        fun detect(context: Context) = when {
+            isXclipseDevice(context) ->
+                GpuProfile(XCLIPSE_DRIVER, "", "1280x720", "Xclipse", "Exynos / Xclipse 940", isXclipse = true)
+            isAdreno8xxDevice(context) ->
+                GpuProfile(ADRENO_8XX_DRIVER, "noconform,sysmem", "1280x720", "Adreno 8xx", "Snapdragon 8 Elite / Adreno 8xx")
+            else ->
+                GpuProfile(DEFAULT_DRIVER, "noconform", "1920x1080", "Adreno 740", "Snapdragon 8 Series / Adreno 740")
+        }
+
+        // Exynos 2400 / 2400e (Galaxy S24, S24+, S24 FE): Samsung's Xclipse 940, an AMD RDNA3 GPU.
+        // Turnip can't drive it, so these devices use the community RADV build for the 940.
+        private fun isXclipseDevice(context: Context): Boolean {
+            if (GPUInformation.isAdrenoGPU(context)) return false
+            val renderer = runCatching { GPUInformation.getRenderer(context) }.getOrNull().orEmpty()
+            if (renderer.contains("Xclipse 940", ignoreCase = true)) return true
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                return Build.SOC_MODEL.contains("s5e9945", ignoreCase = true)
+            }
+            return false
         }
 
         private fun isAdreno8xxDevice(context: Context): Boolean {
@@ -1200,7 +1223,15 @@ private fun prepareLaunch(context: Context, gameRoot: File, gpu: GpuProfile, scr
 
 private fun containerConfig(gameRoot: File, gpu: GpuProfile, screenSize: String): JSONObject {
     val samsungEnv = if (Build.MANUFACTURER.equals("samsung", ignoreCase = true)) " FD_DEV_FEATURES=enable_tp_ubwc_flag_hint=1" else ""
-    val envVars = "WRAPPER_MAX_IMAGE_COUNT=0 ZINK_DESCRIPTORS=lazy ZINK_DEBUG=compact,deck_emu MESA_SHADER_CACHE_DISABLE=false MESA_SHADER_CACHE_MAX_SIZE=512MB mesa_glthread=true WINEESYNC=0 MESA_VK_WSI_PRESENT_MODE=mailbox TU_DEBUG=${gpu.tuDebug} VKD3D_SHADER_MODEL=6_0 PULSE_LATENCY_MSEC=144$samsungEnv"
+    val gpuEnv = if (gpu.isXclipse) {
+        // Validated on a Galaxy S24 (Exynos 2400): DXVK faults at startup with descriptor buffers enabled.
+        " DXVK_CONFIG=dxvk.enableDescriptorBuffer=False"
+    } else {
+        " TU_DEBUG=${gpu.tuDebug}$samsungEnv"
+    }
+    val envVars = "WRAPPER_MAX_IMAGE_COUNT=0 ZINK_DESCRIPTORS=lazy ZINK_DEBUG=compact,deck_emu MESA_SHADER_CACHE_DISABLE=false MESA_SHADER_CACHE_MAX_SIZE=512MB mesa_glthread=true WINEESYNC=0 MESA_VK_WSI_PRESENT_MODE=mailbox VKD3D_SHADER_MODEL=6_0 PULSE_LATENCY_MSEC=144$gpuEnv"
+    // RADV samples BC textures natively; GameNative's BCn emulation renders them black and crashes loads on the 940.
+    val bcnEmulation = if (gpu.isXclipse) "none" else "auto"
     return JSONObject().apply {
         put("id", CONTAINER_ID)
         put("name", "WoW Forever")
@@ -1208,7 +1239,7 @@ private fun containerConfig(gameRoot: File, gpu: GpuProfile, screenSize: String)
         put("envVars", envVars)
         put("graphicsDriver", "Wrapper")
         put("graphicsDriverVersion", gpu.driver)
-        put("graphicsDriverConfig", "version=${gpu.driver},adrenotoolsTurnip=1,resourceType=buffer,bcnEmulation=auto,quality=high")
+        put("graphicsDriverConfig", "version=${gpu.driver},adrenotoolsTurnip=1,resourceType=buffer,bcnEmulation=$bcnEmulation,quality=high")
         put("displayRenderer", "vulkan")
         put("dxwrapper", "dxvk-$DXVK_VERSION-1")
         put("dxwrapperConfig", "version=$DXVK_VERSION-1")
@@ -1310,6 +1341,7 @@ private fun portalOf(root: File) =
 private fun installBundledComponents(context: Context, onStatus: (String) -> Unit) {
     installDriver(context, DEFAULT_DRIVER, "turnip-wow-scheduler-test.zip", onStatus)
     installDriver(context, ADRENO_8XX_DRIVER, "turnip-V32-RP6sched.zip", onStatus)
+    installDriver(context, XCLIPSE_DRIVER, "radv-xclipse-26.3.0-devel-xd-4f88558.zip", onStatus)
 
     val protonDir = File(ImageFs.getSharedProtonDir(context), PROTON_VERSION)
     if (!File(protonDir, "profile.json").exists() || !File(protonDir, "bin/wine").exists()) {

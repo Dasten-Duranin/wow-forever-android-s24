@@ -19,11 +19,12 @@ This uses Blizzard's own **Windows ARM64** WoW client, so the game itself runs n
 | AYN Odin Portal (Snapdragon 8 Elite / Adreno 830) | Supported via bundled Turnip v32 driver |
 | RedMagic 11 Pro (Snapdragon 8 Elite / Adreno 840) | Tested in-world by arusiasotto |
 | Poco F7 (Snapdragon 8s Gen 4 / Adreno 825) | Tested by gusebus |
-| Samsung Galaxy S23/S24/S25 / Z Fold series | Supported (with automatic Samsung UBWC optimization) |
+| Samsung Galaxy S23/S24/S25 / Z Fold series (Snapdragon) | Supported (with automatic Samsung UBWC optimization) |
+| Samsung Galaxy S24 / S24+ / S24 FE (Exynos 2400 / Xclipse 940) | Experimental, tested in-world on a European Galaxy S24. Uses the community [RADV Xclipse](https://github.com/aaditya-v-more/xclipse-driver) driver |
 
 Requirements:
 
-- Snapdragon 8 series (Adreno 7xx or Adreno 8xx). The app bundles both the Adreno 740 driver and the Turnip v32 driver for Snapdragon 8 Elite / Adreno 8xx, automatically detecting the GPU and applying the optimal driver and environment flags.
+- Snapdragon 8 series (Adreno 7xx or Adreno 8xx), or Exynos 2400 (Xclipse 940, experimental). The app bundles both the Adreno 740 driver and the Turnip v32 driver for Snapdragon 8 Elite / Adreno 8xx, automatically detecting the GPU and applying the optimal driver and environment flags.
 - Android 10 or newer, 64-bit.
 - About **60 GB** free for the game data (internal storage or SD card), plus about 4 GB of internal storage for the app and its Windows environment.
 - Wi-Fi. A computer is optional: it only speeds up the first install by copying the game data over instead of streaming it.
