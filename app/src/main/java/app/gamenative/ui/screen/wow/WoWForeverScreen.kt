@@ -1332,7 +1332,7 @@ private const val CONFIG_WTF = "$FLAVOR_DIR/WTF/Config.wtf"
 
 // The portal Config.wtf already points at, else the install's region from .build.info.
 private fun portalOf(root: File) =
-    File(root, CONFIG_WTF).takeIf { it.isFile }?.readLines()?.firstOrNull { it.startsWith("SET portal ", ignoreCase = true) }
+    File(root, CONFIG_WTF).takeIf { it.isFile }?.let { runCatching { it.readLines() }.getOrNull() }?.firstOrNull { it.startsWith("SET portal ", ignoreCase = true) }
         ?.substringAfter(" ")?.substringAfter(" ")?.trim('"')?.takeIf { it.isNotBlank() }
         ?: WowClientDownloader.readBuildInfo(File(root, BUILD_INFO))?.get("Branch")?.takeIf { it.isNotBlank() }?.uppercase() ?: "US"
 
