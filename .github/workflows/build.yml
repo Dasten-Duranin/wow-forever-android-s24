@@ -20,7 +20,9 @@ jobs:
         run: bash tools/fetch_components.sh
 
       - name: Build
-        run: ./gradlew --no-daemon assembleModernRelease
+        run: |
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          ./gradlew --no-daemon assembleModernRelease
 
       - uses: actions/upload-artifact@v4
         with:
