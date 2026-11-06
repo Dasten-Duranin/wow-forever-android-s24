@@ -16,12 +16,8 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - uses: android-actions/setup-android@v3
-
       - name: Fetch runtime components
-        run: |
-          sudo apt-get install -y perl >/dev/null
-          bash tools/fetch_components.sh
+        run: bash tools/fetch_components.sh
 
       - name: Build
         run: ./gradlew --no-daemon assembleModernRelease
