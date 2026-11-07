@@ -1,9 +1,16 @@
 name: Build APK (fork)
 
+# Every push to main builds the APK. With the signing secrets set, it is signed with the fork's fixed key
+# and published as the latest release, which the app's built-in updater offers. Without them it is only
+# uploaded as a workflow artifact, signed with a throwaway debug key.
+
 on:
   push:
     branches: [main]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -27,12 +34,61 @@ jobs:
       - name: Fetch runtime components
         run: tools/fetch_components.sh
 
-      - name: Build
+      - name: Number this build
+        # Upstream's version plus the run number (1.0.3 -> 1.0.3.42), so every build is newer than the last.
+        run: |
+          BASE=$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' app/build.gradle.kts)
+          CODE=$(sed -n 's/.*versionCode = \([0-9]*\).*/\1/p' app/build.gradle.kts)
+          VERSION="$BASE.$GITHUB_RUN_NUMBER"
+          sed -i "s/versionName = \"$BASE\"/versionName = \"$VERSION\"/; s/versionCode = $CODE/versionCode = $((CODE * 10000 + GITHUB_RUN_NUMBER))/" app/build.gradle.kts
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Configure signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
         run: |
           echo "sdk.dir=$ANDROID_HOME" > local.properties
-          ./gradlew --no-daemon testModernReleaseUnitTest --tests "app.gamenative.ui.screen.wow.GpuProfileTest" assembleModernRelease
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::warning::Signing secrets aren't set; building with a throwaway debug key and skipping the release."
+            exit 0
+          fi
+          mkdir -p app/keystores
+          echo "$KEYSTORE_BASE64" | base64 -d > app/keystores/release.jks
+          {
+            echo "storeFile=keystores/release.jks"
+            echo "storePassword=$KEYSTORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEYSTORE_PASSWORD"
+          } > app/keystores/keystore.properties
+          echo "SIGNED=1" >> "$GITHUB_ENV"
+
+      - name: Build
+        run: ./gradlew --no-daemon testModernReleaseUnitTest --tests "app.gamenative.ui.screen.wow.GpuProfileTest" assembleModernRelease
+
+      - name: Prepare the APK
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/modern/release/*.apk dist/WoW-Foreverywhere.apk
+          "$ANDROID_HOME"/build-tools/*/apksigner verify --print-certs dist/WoW-Foreverywhere.apk | grep -i "SHA-256" | head -1
 
       - uses: actions/upload-artifact@v4
         with:
           name: WoW-Foreverywhere-apk
-          path: app/build/outputs/apk/modern/release/*.apk
+          path: dist/WoW-Foreverywhere.apk
+
+      - name: Publish the release
+        if: env.SIGNED == '1'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.VERSION }}
+          target_commitish: ${{ github.sha }}
+          name: WoW Foreverywhere S24 v${{ env.VERSION }}
+          body: "Fork build of WoW Foreverywhere with Exynos 2400 / Xclipse 940 support. Commit ${{ github.sha }}."
+          make_latest: true
+          files: dist/WoW-Foreverywhere.apk
+
+      - name: Remove signing material
+        if: always()
+        run: rm -f app/keystores/release.jks app/keystores/keystore.properties local.properties
