@@ -919,12 +919,29 @@ internal data class GpuProfile(
          */
         val XCLIPSE = GpuProfile(XCLIPSE_DRIVER, "", "1280x720", "Xclipse 940", "Exynos 2400 / Xclipse 940", isXclipse = true)
 
-        fun detect(context: Context) = when {
+        /** Every profile, in the order Settings lists them. */
+        val ALL = listOf(ADRENO_740, ADRENO_8XX, XCLIPSE, QUEST)
+
+        /** The profile picked in Settings, or the one detected for this device. */
+        fun detect(context: Context): GpuProfile =
+            app.gamenative.wow.product.GpuProfileChoice.chosen?.let { label -> ALL.firstOrNull { it.label == label } }
+                ?: autoDetect(context)
+
+        fun autoDetect(context: Context) = when {
             isXclipse940(if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Build.SOC_MODEL else "", Build.HARDWARE, Build.BOARD) -> XCLIPSE
             isMetaQuest3(Build.MANUFACTURER, Build.MODEL, if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Build.SOC_MODEL else "") -> QUEST
             isAdreno8xxDevice(context) -> ADRENO_8XX
             else -> ADRENO_740
         }
+
+        /**
+         * Whether this device matches a profile on its own: an Adreno GPU, or a GPU with a dedicated profile.
+         * A profile picked by hand also counts, since the player chose it knowingly.
+         */
+        fun isSupportedDevice(context: Context): Boolean =
+            app.gamenative.wow.product.GpuProfileChoice.chosen != null ||
+                autoDetect(context).let { it.isXclipse || it == QUEST } ||
+                runCatching { GPUInformation.isAdrenoGPU(context) }.getOrDefault(true)
 
         private fun isAdreno8xxDevice(context: Context): Boolean = isAdreno8xx(
             runCatching { GPUInformation.getRenderer(context) }.getOrNull().orEmpty(),

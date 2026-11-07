@@ -220,6 +220,7 @@ fun SettingsScreen(
             FwSection("Device") {
                 Text("${launcher.gpu.edition} profile", style = Fw.Data)
             }
+            GraphicsProfileSection()
             ResolutionSection(launcher)
             FrameGenerationSection()
             TroubleshootingSection(launcher, onOpenControllerTest)
@@ -369,6 +370,36 @@ private fun FrameGenerationSection() {
             FwButton("Choose Lossless.dll", { picker.launch(arrayOf("*/*")) }, kind = FwButtonKind.Ghost)
         }
         message?.let { Text(it, style = Fw.Secondary.copy(color = Fw.Warn)) }
+    }
+}
+
+/** Settings, Graphics profile: the driver setup the game uses, detected for this device or picked here. */
+@Composable
+private fun GraphicsProfileSection() {
+    val context = LocalContext.current
+    val detected = remember { app.gamenative.ui.screen.wow.GpuProfile.autoDetect(context) }
+    var current by remember { mutableStateOf(app.gamenative.wow.product.GpuProfileChoice.chosen) }
+    FwSection("Graphics profile") {
+        Text("The graphics driver and settings the game starts with. Keep Automatic unless the detected profile doesn't suit your device. A change applies the next time you start the game.", style = Fw.Secondary)
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            FwRow(selected = current == null, onClick = {
+                app.gamenative.wow.product.GpuProfileChoice.save(context, null)
+                current = null
+            }) {
+                Text("Automatic, for this device", style = Fw.Text, modifier = Modifier.weight(1f))
+                Text(detected.label, style = Fw.Data.copy(color = Fw.Ash))
+                if (current == null) Text("Selected", style = Fw.Data.copy(color = Fw.Brass))
+            }
+            app.gamenative.ui.screen.wow.GpuProfile.ALL.forEach { p ->
+                FwRow(selected = current == p.label, onClick = {
+                    app.gamenative.wow.product.GpuProfileChoice.save(context, p.label)
+                    current = p.label
+                }) {
+                    Text(p.edition, style = Fw.Text, modifier = Modifier.weight(1f))
+                    if (current == p.label) Text("Selected", style = Fw.Data.copy(color = Fw.Brass))
+                }
+            }
+        }
     }
 }
 

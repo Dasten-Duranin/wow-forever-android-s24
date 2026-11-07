@@ -147,9 +147,14 @@ object DeviceCheck {
     fun run(context: Context): List<Pair<String, Boolean>> {
         val adreno = runCatching { GPUInformation.isAdrenoGPU(context) }.getOrDefault(false)
         val renderer = runCatching { GPUInformation.getRenderer(context) }.getOrNull().orEmpty()
+        val xclipse = app.gamenative.ui.screen.wow.GpuProfile.autoDetect(context).isXclipse
         val is64 = Build.SUPPORTED_64_BIT_ABIS.contains("arm64-v8a")
         return listOf(
-            (if (adreno) "Adreno GPU ($renderer)" else "Not an Adreno GPU: the game needs a Snapdragon chip") to adreno,
+            when {
+                adreno -> "Adreno GPU ($renderer)" to true
+                xclipse -> "Xclipse 940 GPU (Exynos 2400, experimental)" to true
+                else -> "Not an Adreno GPU: the game needs a Snapdragon chip" to false
+            },
             "64-bit ARM processor" to is64,
             "Android ${Build.VERSION.RELEASE}" to (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q),
         )

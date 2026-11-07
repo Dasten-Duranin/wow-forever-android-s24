@@ -218,7 +218,7 @@ fun ForeverywhereApp(onLaunch: (appId: String) -> Unit) {
         if (launcher.unsupportedDeviceWarning) {
             FwDialog(
                 title = "This device can't run the game",
-                message = "WoW Forever needs a Snapdragon chip with an Adreno GPU. On this device, including Android emulators, starting the game will most likely crash the app.",
+                message = "WoW Forever needs a Snapdragon chip with an Adreno GPU, or an Exynos 2400 (Xclipse 940). No graphics profile matches this device, including Android emulators, so starting the game will most likely crash the app. You can pick a profile by hand in Settings, Graphics profile.",
                 confirm = "Try anyway",
                 onConfirm = {
                     launcher.unsupportedDeviceWarning = false

@@ -58,7 +58,8 @@ class LauncherController(
     private val onLaunch: (appId: String) -> Unit,
 ) {
     val registry = InstallRegistry(context)
-    internal val gpu by lazy { GpuProfile.detect(context) }
+    /** Read fresh each time, so a profile picked in Settings applies at the next launch. */
+    internal val gpu: GpuProfile get() = GpuProfile.detect(context)
 
     /** The game version the whole app works with (Settings, Game version). */
     var version by mutableStateOf(GameVersions.selected)
@@ -110,7 +111,7 @@ class LauncherController(
      * The game's graphics stack crashes the whole app there, so ask before launching.
      */
     var unsupportedDeviceWarning by mutableStateOf(false)
-    private val supportedGpu = runCatching { com.winlator.core.GPUInformation.isAdrenoGPU(context) }.getOrDefault(true)
+    private val supportedGpu: Boolean get() = GpuProfile.isSupportedDevice(context)
 
     /** The switch to the launch version is running; [convertProgress] and [convertSpeed] follow it. */
     var isConverting by mutableStateOf(false)
