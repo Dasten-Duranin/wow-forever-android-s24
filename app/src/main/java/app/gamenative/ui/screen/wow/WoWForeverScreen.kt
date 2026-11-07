@@ -917,7 +917,7 @@ internal data class GpuProfile(
          * drive it, so it uses the community RADV build (aaditya-v-more/xclipse-driver). Validated in-world on
          * a European Galaxy S24.
          */
-        val XCLIPSE = GpuProfile(XCLIPSE_DRIVER, "", "1280x720", "Xclipse 940", "Exynos 2400 / Xclipse 940", isXclipse = true)
+        val XCLIPSE = GpuProfile(XCLIPSE_DRIVER, "", "1280x720", "Xclipse 940", "Exynos 2400 / Xclipse 940", maxDeviceMemory = 2048, isXclipse = true)
 
         /** Every profile, in the order Settings lists them. */
         val ALL = listOf(ADRENO_740, ADRENO_8XX, XCLIPSE, QUEST)
