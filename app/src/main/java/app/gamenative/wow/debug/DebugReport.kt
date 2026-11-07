@@ -51,6 +51,7 @@ object DebugReport {
 
             put("summary.txt", summaryText(summary))
             put("logcat.txt", logcat())
+            put("exit_reasons.txt", exitReasons(context))
             putFile("app.log", File(DebugLog.dir(context), "app.log"))
             putFile("app.log.1", File(DebugLog.dir(context), "app.log.1"))
             putFile("wine_debug.log", File(external, "wine_logs/wine_debug.log"))
@@ -61,6 +62,49 @@ object DebugReport {
             }
         }
         return zip
+    }
+
+    /**
+     * Why Android ended the app's last processes (low memory, native crash, killed by the system...). The app's
+     * own logcat stops dead when the system kills it, so this is the only record of those exits.
+     */
+    private fun exitReasons(context: Context): String {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.R) return "Needs Android 11 or later.\n"
+        val am = context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+        val exits = runCatching { am.getHistoricalProcessExitReasons(context.packageName, 0, 8) }
+            .getOrElse { return "Unavailable: ${it.message}\n" }
+        if (exits.isEmpty()) return "No recorded exits.\n"
+        val time = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
+        return exits.joinToString("\n") { e ->
+            buildString {
+                appendLine("${time.format(Date(e.timestamp))}  pid ${e.pid}  ${e.processName}")
+                appendLine("  reason: ${exitReasonName(e.reason)} (${e.reason}), status ${e.status}, importance ${e.importance}")
+                appendLine("  memory: pss ${e.pss / 1024} MB, rss ${e.rss / 1024} MB")
+                e.description?.let { appendLine("  description: $it") }
+                if (e.reason == android.app.ApplicationExitInfo.REASON_ANR) {
+                    runCatching { e.traceInputStream?.bufferedReader()?.use { it.readText().take(20_000) } }
+                        .getOrNull()?.let { appendLine("  trace:\n$it") }
+                }
+            }
+        }
+    }
+
+    private fun exitReasonName(reason: Int): String = when (reason) {
+        android.app.ApplicationExitInfo.REASON_LOW_MEMORY -> "LOW_MEMORY"
+        android.app.ApplicationExitInfo.REASON_CRASH -> "CRASH (Java)"
+        android.app.ApplicationExitInfo.REASON_CRASH_NATIVE -> "CRASH_NATIVE"
+        android.app.ApplicationExitInfo.REASON_ANR -> "ANR"
+        android.app.ApplicationExitInfo.REASON_SIGNALED -> "SIGNALED"
+        android.app.ApplicationExitInfo.REASON_EXIT_SELF -> "EXIT_SELF"
+        android.app.ApplicationExitInfo.REASON_USER_REQUESTED -> "USER_REQUESTED"
+        android.app.ApplicationExitInfo.REASON_USER_STOPPED -> "USER_STOPPED"
+        android.app.ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE -> "EXCESSIVE_RESOURCE_USAGE"
+        android.app.ApplicationExitInfo.REASON_FREEZER -> "FREEZER"
+        android.app.ApplicationExitInfo.REASON_OTHER -> "OTHER"
+        android.app.ApplicationExitInfo.REASON_DEPENDENCY_DIED -> "DEPENDENCY_DIED"
+        android.app.ApplicationExitInfo.REASON_INITIALIZATION_FAILURE -> "INITIALIZATION_FAILURE"
+        android.app.ApplicationExitInfo.REASON_PERMISSION_CHANGE -> "PERMISSION_CHANGE"
+        else -> "UNKNOWN"
     }
 
     fun share(context: Context, zip: File) {
