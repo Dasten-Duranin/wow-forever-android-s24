@@ -70,7 +70,7 @@ class GpuProfileTest {
     @Test
     fun xclipseUsesRadvWithoutBcnEmulation() {
         assertEquals(
-            "version=RADV-Xclipse-xd-4f88558,adrenotoolsTurnip=1,resourceType=buffer,bcnEmulation=none,quality=high,maxDeviceMemory=1024",
+            "version=RADV-Xclipse-xd-4f88558,adrenotoolsTurnip=1,resourceType=buffer,bcnEmulation=none,quality=high,maxDeviceMemory=512",
             graphicsDriverConfig(GpuProfile.XCLIPSE),
         )
     }
