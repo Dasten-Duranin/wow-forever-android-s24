@@ -38,7 +38,7 @@ import timber.log.Timber
  */
 class FullDownloader(
     private val http: OkHttpClient = Net.http,
-    private val cdnScheme: String = "http",
+    private val cdnScheme: String = "https",
     private val workers: Int = 4,
     private val usableSpace: (File) -> Long = { generateSequence(it) { f -> f.parentFile }.first { f -> f.exists() }.usableSpace },
     /** The game must be closed while its storage is swapped. */
@@ -369,7 +369,7 @@ class FullDownloader(
     companion object {
         /** The folder the storage is built in, next to the game's own `Data/data`. */
         const val STAGING = "foreverywhere-download"
-        private const val OLD = "foreverywhere-replaced"
+        const val OLD = "foreverywhere-replaced"
 
         /** Holds the build key of the last full download, next to `.build.info`. */
         const val MARKER = ".foreverywhere-full"

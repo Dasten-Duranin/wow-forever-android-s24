@@ -1,10 +1,12 @@
 package app.gamenative.wow.ui
 
 import android.content.Context
+import android.os.SystemClock
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import app.gamenative.R
 import app.gamenative.PluviaApp
 import app.gamenative.events.AndroidEvent
 import app.gamenative.ui.screen.wow.BattleNetSignIn
@@ -13,9 +15,13 @@ import app.gamenative.ui.screen.wow.GpuProfile
 import app.gamenative.ui.screen.wow.StorageAccessDeniedException
 import app.gamenative.ui.screen.wow.WoWLauncherState
 import app.gamenative.ui.screen.wow.WowClientDownloader
+import app.gamenative.ui.screen.wow.configPortal
+import app.gamenative.ui.screen.wow.configTextLocale
 import app.gamenative.ui.screen.wow.fitScreenSizeToWindow
 import app.gamenative.ui.screen.wow.installLocale
+import app.gamenative.wow.install.GameData
 import app.gamenative.wow.install.GameInstaller
+import app.gamenative.wow.debug.DebugLog
 import app.gamenative.wow.install.DownloadSpeed
 import app.gamenative.wow.install.InstallController
 import app.gamenative.wow.install.InstallProgress
@@ -46,6 +52,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
+import app.gamenative.wow.product.DeviceClock
 
 /**
  * Launch, game-update and app-update state for the active install. The logic is moved from upstream's
@@ -98,6 +105,8 @@ class LauncherController(
 
     var appUpdate by mutableStateOf<AppUpdater.Release?>(null)
         private set
+    var appUpdateCheckFailed by mutableStateOf(false)
+        private set
     var isDownloadingAppUpdate by mutableStateOf(false)
         private set
     var appUpdateProgress by mutableFloatStateOf(0f)
@@ -111,6 +120,9 @@ class LauncherController(
      * The game's graphics stack crashes the whole app there, so ask before launching.
      */
     var unsupportedDeviceWarning by mutableStateOf(false)
+
+    /** Set when Play is pressed on a device on for so long that the game's clock stops: how many days it's been on. */
+    var restartWarningDays by mutableStateOf<Long?>(null)
     private val supportedGpu: Boolean get() = GpuProfile.isSupportedDevice(context)
 
     /** The switch to the launch version is running; [convertProgress] and [convertSpeed] follow it. */
@@ -128,16 +140,38 @@ class LauncherController(
     var canConvertToLaunch by mutableStateOf(false)
         private set
 
+    var isClearingData by mutableStateOf(false)
+        private set
+
     private var launchJob: Job? = null
     private var pendingInstallPermission = false
 
     val filesMissing get() = !(files.dataExists && files.buildInfoExists)
-    val canPlay get() = !isLaunching && !isUpdating && !filesMissing && !files.isWrongGame
-    val busy get() = isLaunching || isUpdating
+    val canPlay get() = !busy && !filesMissing && !files.isWrongGame
+    val busy get() = isLaunching || isUpdating || isClearingData
+
+    /** Deletes the world data so the game downloads it again. The caller has checked the game and downloads are stopped. */
+    fun clearGameData() {
+        if (busy || PluviaApp.xEnvironment != null) return
+        isClearingData = true
+        errorMessage = null
+        scope.launch {
+            try {
+                withContext(Dispatchers.IO) { GameData.clear(File(gamePath)) }
+                checkFiles()
+            } catch (e: Exception) {
+                Timber.e(e, "Error clearing game data")
+                if (e.isPermissionDenied()) needsStoragePermission = true
+                errorMessage = context.getString(R.string.fw_error_clear_data, e.message)
+            } finally {
+                isClearingData = false
+            }
+        }
+    }
 
     fun checkFiles(): Boolean {
         files = GamePath.status(context, gamePath)
-        if (files.isWrongGame) errorMessage = "This folder holds ${files.productCode}, not ${version.displayName}."
+        if (files.isWrongGame) errorMessage = context.getString(R.string.fw_error_wrong_game, files.productCode, version.displayName)
         return files.isReady
     }
 
@@ -203,7 +237,7 @@ class LauncherController(
         if (BattleNetSignIn.save(context, login)) {
             hasSavedLogin = true
         } else {
-            errorMessage = "Couldn't save your login on this device. You can still sign in inside the game."
+            errorMessage = context.getString(R.string.fw_error_save_login)
         }
     }
 
@@ -216,7 +250,11 @@ class LauncherController(
     private suspend fun fetchVersionStatus() {
         isCheckingVersion = true
         val product = files.product
-        versionStatus = withContext(Dispatchers.IO) { WowClientDownloader.checkVersion(File(gamePath), product) }
+        val region = GameRegions.chosen
+        val status = withContext(Dispatchers.IO) { WowClientDownloader.checkVersion(File(gamePath), product) }
+        // A check for a region the player has since switched away from is stale; the switch started a new one.
+        if (region != GameRegions.chosen) return
+        versionStatus = status
         canConvertToLaunch = product == WowProduct.BETA && ForeverTracks.selected == ForeverTrack.LAUNCH &&
             withContext(Dispatchers.IO) { runCatching { WowClientDownloader.isProductLive(WowProduct.FOREVER) }.getOrDefault(false) }
         isCheckingVersion = false
@@ -228,17 +266,24 @@ class LauncherController(
         scope.launch { fetchVersionStatus() }
     }
 
-    private suspend fun fetchAppUpdate(): AppUpdater.Release? = AppUpdater.check().also { appUpdate = it }
+    private suspend fun fetchAppUpdate(): AppUpdater.Release? = AppUpdater.check().also {
+        appUpdate = it
+        appUpdateCheckFailed = AppUpdater.lastCheckFailed
+    }
 
     fun checkAppUpdate() {
         scope.launch { fetchAppUpdate() }
     }
 
-    fun launchGame(confirmedUnsupported: Boolean = false) {
+    fun launchGame(confirmedUnsupported: Boolean = false, confirmedRestart: Boolean = false) {
         val product = files.product
         if (isLaunching || product == null) return
         if (!supportedGpu && !confirmedUnsupported) {
             unsupportedDeviceWarning = true
+            return
+        }
+        if (!confirmedRestart && DeviceClock.needsRestart(SystemClock.elapsedRealtime())) {
+            restartWarningDays = DeviceClock.days(SystemClock.elapsedRealtime())
             return
         }
         if (!files.hasStorageAccess) {
@@ -247,7 +292,7 @@ class LauncherController(
         }
         isLaunching = true
         errorMessage = null
-        statusText = "Preparing components..."
+        statusText = context.getString(R.string.fw_preparing_components)
         launchJob = scope.launch {
             try {
                 val screenSize = fitScreenSizeToWindow(context, gpu.screenSize)
@@ -256,7 +301,7 @@ class LauncherController(
                         scope.launch(Dispatchers.Main) { statusText = msg }
                     }
                 }
-                statusText = "Booting into World of Warcraft..."
+                statusText = context.getString(R.string.fw_booting_game)
                 onLaunch(containerId)
             } catch (e: CancellationException) {
                 throw e
@@ -265,8 +310,8 @@ class LauncherController(
                 needsStoragePermission = true
             } catch (e: Exception) {
                 Timber.e(e, "Error launching WoW Forever")
-                errorMessage = e.message ?: "Launch failed"
-                statusText = "Launch failed"
+                errorMessage = e.message ?: context.getString(R.string.fw_launch_failed)
+                statusText = context.getString(R.string.fw_launch_failed)
                 isLaunching = false
             }
         }
@@ -288,7 +333,7 @@ class LauncherController(
             return
         }
         isUpdating = true
-        updateStatusText = "Connecting to Blizzard CDN..."
+        updateStatusText = context.getString(R.string.fw_connecting_blizzard)
         errorMessage = null
         scope.launch {
             try {
@@ -298,9 +343,9 @@ class LauncherController(
                 GameInstaller().run(InstallRequest(root, product, installLocale(root, product))) { p ->
                     scope.launch(Dispatchers.Main) {
                         updateStatusText = when (p.phase) {
-                            InstallProgress.Phase.RESOLVING -> "Reading build ${target.remoteVersion}..."
-                            InstallProgress.Phase.DOWNLOADING -> p.fraction?.let { "Updating game files ${(it * 100).toInt()}%" } ?: "Updating game files..."
-                            else -> "Finishing update..."
+                            InstallProgress.Phase.RESOLVING -> context.getString(R.string.fw_reading_build, target.remoteVersion)
+                            InstallProgress.Phase.DOWNLOADING -> p.fraction?.let { context.getString(R.string.fw_updating_game_progress, (it * 100).toInt()) } ?: context.getString(R.string.fw_updating_game)
+                            else -> context.getString(R.string.fw_finishing_update)
                         }
                     }
                 }
@@ -311,7 +356,7 @@ class LauncherController(
             } catch (e: Exception) {
                 Timber.e(e, "Error updating game")
                 if (e.isPermissionDenied()) needsStoragePermission = true
-                errorMessage = "Update failed: ${e.message}"
+                errorMessage = context.getString(R.string.fw_update_failed, e.message)
                 isUpdating = false
             }
         }
@@ -321,7 +366,7 @@ class LauncherController(
     fun convertToLaunch() {
         if (busy || files.product != WowProduct.BETA) return
         isUpdating = true
-        updateStatusText = "Switching to the launch version..."
+        updateStatusText = context.getString(R.string.fw_switching_release)
         errorMessage = null
         isConverting = true
         convertProgress = null
@@ -350,7 +395,7 @@ class LauncherController(
             } catch (e: Exception) {
                 Timber.e(e, "Error converting to launch product")
                 if (e.isPermissionDenied()) needsStoragePermission = true
-                errorMessage = "Couldn't switch to the launch version: ${e.message}"
+                errorMessage = context.getString(R.string.fw_switch_release_failed, e.message)
                 isUpdating = false
                 isConverting = false
                 convertProgress = null
@@ -376,7 +421,7 @@ class LauncherController(
                 installOrRequestPermission(apk)
             } catch (e: Exception) {
                 Timber.e(e, "Error downloading app update")
-                errorMessage = "App update download failed: ${e.message}"
+                errorMessage = context.getString(R.string.fw_app_update_failed, e.message)
                 isDownloadingAppUpdate = false
             }
         }
@@ -456,7 +501,7 @@ class LauncherController(
                 fetchVersionStatus()
                 val update = updateJob.await()
                 WoWLauncherState.shouldAutoLaunch = false
-                if (shouldAutoLaunch(versionStatus?.isOutdated == true, update != null, canConvertToLaunch, supportedGpu)) {
+                if (shouldAutoLaunch(versionStatus?.isOutdated == true, update != null, canConvertToLaunch, supportedGpu, DebugLog.isEnabled(context))) {
                     launchGame()
                 } else {
                     PluviaApp.events.emit(AndroidEvent.ClearBootingSplash)
@@ -482,7 +527,17 @@ class LauncherController(
         "Installed: ${files.product?.displayName ?: "none"} ${versionStatus?.localVersion.orEmpty()}",
         "Live version: ${versionStatus?.remoteVersion ?: "unknown"}",
         "Saved login: ${if (hasSavedLogin) "yes" else "no"}",
+        "Game text language: ${gameTextLanguage() ?: "not set"}",
+        "Time since boot: ${DeviceClock.days(SystemClock.elapsedRealtime())} days",
     )
+
+    private fun gameTextLanguage(): String? = configLines()?.let(::configTextLocale)
+
+    /** The login portal in the game's Config.wtf, which it keeps using until a region is picked in Settings. */
+    fun gamePortal(): String? = configLines()?.let(::configPortal)
+
+    private fun configLines(): List<String>? =
+        gameFolder()?.let { File(it, "WTF/Config.wtf") }?.takeIf { it.isFile }?.let { runCatching { it.readLines() }.getOrNull() }
 
     /** The product folder holding the game's own Logs and Errors. */
     fun gameFolder(): File? = files.product?.let { File(gamePath, it.flavorDir) }
@@ -500,5 +555,5 @@ class LauncherController(
  * Whether the app starts the game by itself on opening: not when the game or the app needs an update,
  * when a beta install should switch to WoW Forever first, or on a device the game can't run on.
  */
-internal fun shouldAutoLaunch(gameOutdated: Boolean, appUpdate: Boolean, switchToLaunch: Boolean, supportedGpu: Boolean): Boolean =
-    !gameOutdated && !appUpdate && !switchToLaunch && supportedGpu
+internal fun shouldAutoLaunch(gameOutdated: Boolean, appUpdate: Boolean, switchToLaunch: Boolean, supportedGpu: Boolean, debugLogging: Boolean = false): Boolean =
+    !gameOutdated && !appUpdate && !switchToLaunch && supportedGpu && !debugLogging

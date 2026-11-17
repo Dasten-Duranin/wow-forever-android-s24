@@ -276,14 +276,31 @@ public class XServer {
     }
 
     public void injectKeyPress(XKeycode xKeycode, int keysym) {
+        injectKeyPress(xKeycode, keysym, true);
+    }
+
+    public void injectKeyPress(XKeycode xKeycode, int keysym, boolean autoRepeat) {
         try (XLock lock = lock(Lockable.WINDOW_MANAGER, Lockable.INPUT_DEVICE)) {
-            keyboard.setKeyPress(xKeycode.getId(), keysym);
+            keyboard.setKeyPress(xKeycode.getId(), keysym, autoRepeat);
         }
     }
 
     public void injectKeyRelease(XKeycode xKeycode) {
         try (XLock lock = lock(Lockable.WINDOW_MANAGER, Lockable.INPUT_DEVICE)) {
             keyboard.setKeyRelease(xKeycode.getId());
+        }
+    }
+
+    /** Presses a raw keycode that has no {@link XKeycode}, such as a spare key carrying a Unicode keysym. */
+    public void injectKeyPress(byte keycode, int keysym) {
+        try (XLock lock = lock(Lockable.WINDOW_MANAGER, Lockable.INPUT_DEVICE)) {
+            keyboard.setKeyPress(keycode, keysym);
+        }
+    }
+
+    public void injectKeyRelease(byte keycode) {
+        try (XLock lock = lock(Lockable.WINDOW_MANAGER, Lockable.INPUT_DEVICE)) {
+            keyboard.setKeyRelease(keycode);
         }
     }
 

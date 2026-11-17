@@ -84,7 +84,7 @@ class GameInstallerTest {
                 val body = files[path] ?: return MockResponse().setResponseCode(404)
                 val range = request.getHeader("Range")?.removePrefix("bytes=")?.split("-")?.map { it.toInt() }
                 val slice = if (range != null) body.copyOfRange(range[0], minOf(range[1] + 1, body.size)) else body
-                return MockResponse().setBody(Buffer().write(slice))
+                return MockResponse().setResponseCode(if (range != null) 206 else 200).setBody(Buffer().write(slice))
             }
         }
         server.start()
@@ -97,7 +97,7 @@ class GameInstallerTest {
     private fun cdnPath(kind: String, key: String) = "/tpr/wow/$kind/${key.substring(0, 2)}/${key.substring(2, 4)}/$key"
 
     private fun installer(space: Long = Long.MAX_VALUE) =
-        GameInstaller(patchBase = server.url("/").toString().trimEnd('/'), http = OkHttpClient(), usableSpace = { space })
+        GameInstaller(patchBase = server.url("/").toString().trimEnd('/'), http = OkHttpClient(), cdnScheme = "http", usableSpace = { space })
 
     private val req get() = InstallRequest(root, WowProduct.FOREVER)
 
@@ -199,6 +199,49 @@ class GameInstallerTest {
         assertEquals("1.60.1.70245", row["Version"])
         assertTrue(File(root, "_forever_/Wow-arm64.exe").isFile)
         assertFalse("enUS-only file skipped for a deDE install", File(root, "_forever_/Utils/loader.dll").exists())
+    }
+
+    @Test
+    fun updateFollowsTheRegionPickedInSettings() {
+        val tags = "Windows arm64 US? acct-USA? geoip-US? enUS speech?:Windows arm64 US? enUS text?"
+        File(root, ".build.info").writeText(
+            BuildInfo(GameInstaller.BUILD_INFO_HEADER, listOf(mapOf("Branch" to "us", "Active" to "1", "Tags" to tags, "Version" to "old", "Product" to "wowf"))).serialize(),
+        )
+        val request = InstallRequest(root, WowProduct.FOREVER)
+        assertEquals("us", request.keepingInstallRegion().region)
+        try {
+            app.gamenative.wow.product.GameRegions.chosen = app.gamenative.wow.product.GameRegion.EU
+            assertEquals("eu", request.keepingInstallRegion().region)
+            assertEquals("enUS", request.keepingInstallRegion().locale)
+        } finally {
+            app.gamenative.wow.product.GameRegions.chosen = null
+        }
+    }
+
+    @Test
+    fun updateAfterARegionSwitchMovesTheInstallToTheNewRegion() = runBlocking {
+        val tags = "Windows arm64 EU? acct-EUA? geoip-EU? deDE speech?:Windows arm64 EU? deDE text?"
+        File(root, ".build.info").writeText(
+            BuildInfo(GameInstaller.BUILD_INFO_HEADER, listOf(mapOf("Branch" to "eu", "Active" to "1", "Tags" to tags, "Version" to "old", "Product" to "wowf"))).serialize(),
+        )
+        try {
+            app.gamenative.wow.product.GameRegions.chosen = app.gamenative.wow.product.GameRegion.KR
+            installer().run(req) {}
+        } finally {
+            app.gamenative.wow.product.GameRegions.chosen = null
+        }
+        val row = BuildInfo.read(root)!!.active(WowProduct.FOREVER)!!
+        assertEquals("kr", row["Branch"])
+        assertEquals("Windows arm64 KR? acct-KRA? geoip-KR? deDE speech?:Windows arm64 KR? deDE text?", row["Tags"])
+    }
+
+    @Test
+    fun regionTagsChangeOnlyTheRegion() {
+        assertEquals(
+            "Windows arm64 TW? acct-TWA? geoip-TW? enUS speech?:Windows arm64 TW? enUS text?",
+            GameInstaller.regionTags("Windows arm64 US? acct-USA? geoip-US? enUS speech?:Windows arm64 US? enUS text?", "tw"),
+        )
+        assertEquals("Windows arm64 EU? enUS speech?", GameInstaller.regionTags("Windows arm64 EU? enUS speech?", "eu"))
     }
 
     @Test

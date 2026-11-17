@@ -1,12 +1,16 @@
-Frame generation can't stop the game from starting, and more help for blocked logins.
+Install add-ons from a .zip on your device, and a lighter default resolution.
 
-## Fixed
+## Added
 
-- **A wrong Lossless.dll no longer closes the game.** If the Lossless.dll you added doesn't have the frame generation shaders, the game used to drop straight back to the home screen. Now the game starts without frame generation and tells you, Settings flags the file, and choosing a file like that is turned down with a note on where to get the right one: `Steam/steamapps/common/Lossless Scaling` from a current Steam install.
+- **Install add-ons from a .zip file.** In the add-on browser, **Add addon** now takes a link or a .zip you've downloaded to your device. GitHub "Download ZIP" files and zips with the add-on at the top level are unpacked into the folder name WoW expects, so they load in game. The same applies to add-ons installed from a link.
 
 ## Changed
 
-- **Fix a blocked login** now starts with the step that got one player past BLZ51914400: turn off any phone setting that uses Wi-Fi and mobile data together, such as *Optimize network for speed* in **Settings → System → Network**.
+- **The game starts at 720p unless you've picked a resolution.** On many phones the old Automatic setting meant 1080p, which is harder on the device than most people expect. If you chose a resolution in **Settings → Resolution**, including Automatic, it stays as you set it.
+
+## Fixed
+
+- **On 4:3 screens the add-on browser's search box shrank to a sliver.** On narrower screens, search and Add addon now get their own row.
 
 ## Install
 

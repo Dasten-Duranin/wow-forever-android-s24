@@ -43,6 +43,31 @@ class GameConfigTest {
     }
 
     @Test
+    fun newItalianConfigGetsEnglishTextAndKeepsItalianAudio() {
+        val lines = buildConfigWtf(null, WowProduct.FOREVER, "1920x1080", locale = "itIT")!!
+        assertTrue("SET textLocale \"enUS\"" in lines)
+        assertTrue("SET audioLocale \"itIT\"" in lines)
+    }
+
+    @Test
+    fun existingItalianTextIsSwitchedToEnglishOnce() {
+        val first = buildConfigWtf(null, WowProduct.FOREVER, "1920x1080")!!
+        val italian = first.map { if (it.startsWith("SET textLocale")) "SET textLocale \"itIT\"" else if (it.startsWith("SET audioLocale")) "SET audioLocale \"itIT\"" else it }
+        val fixed = buildConfigWtf(italian, WowProduct.FOREVER, "1920x1080")!!
+        assertEquals(1, fixed.count { it.startsWith("SET textLocale") })
+        assertEquals("enUS", configTextLocale(fixed))
+        assertTrue("SET audioLocale \"itIT\"" in fixed)
+        assertEquals(null, buildConfigWtf(fixed, WowProduct.FOREVER, "1920x1080"))
+    }
+
+    @Test
+    fun otherTextLanguagesAreLeftAlone() {
+        val first = buildConfigWtf(null, WowProduct.FOREVER, "1920x1080", locale = "deDE")!!
+        assertEquals("deDE", configTextLocale(first))
+        assertEquals(null, buildConfigWtf(first, WowProduct.FOREVER, "1920x1080"))
+    }
+
+    @Test
     fun installLocaleReadsBuildInfoTags() {
         val root = java.nio.file.Files.createTempDirectory("wow").toFile()
         assertEquals("enUS", installLocale(root, WowProduct.FOREVER))
@@ -75,10 +100,40 @@ class GameConfigTest {
     }
 
     @Test
+    fun taiwanInstallUsesTheKoreanPortal() {
+        val root = java.nio.file.Files.createTempDirectory("wow").toFile()
+        java.io.File(root, ".build.info").writeText("Branch!STRING:0|Active!DEC:1|Product!STRING:0\ntw|1|wowf\n")
+        assertEquals("KR", installPortal(root, WowProduct.FOREVER))
+        try {
+            app.gamenative.wow.product.GameRegions.chosen = app.gamenative.wow.product.GameRegion.TW
+            assertEquals("KR", installPortal(root, WowProduct.FOREVER))
+        } finally {
+            app.gamenative.wow.product.GameRegions.chosen = null
+        }
+    }
+
+    @Test
+    fun deadTaiwanPortalIsReplacedWithKorea() {
+        val existing = listOf(
+            "SET gxApi \"D3D11\"", "SET portal \"TW\"", "SET agentUID \"wowf\"", "SET gxFullscreenResolution \"1920x1080\"",
+            "SET gxWindowedResolution \"1920x1080\"", "SET showScreenNarrationDialog \"0\"", "SET accessibilityScreenNarrationEnabled \"0\"",
+            WORK_OPTIMS_LINE,
+        )
+        // Even with no region picked, so a config written by an older version gets fixed.
+        val fixed = buildConfigWtf(existing, WowProduct.FOREVER, "1920x1080", portal = "KR")!!
+        assertTrue("SET portal \"KR\"" in fixed)
+        assertTrue(fixed.none { it.equals("SET portal \"TW\"", ignoreCase = true) })
+        assertEquals(1, fixed.count { it.startsWith("SET portal ") })
+        assertNull(buildConfigWtf(fixed, WowProduct.FOREVER, "1920x1080", portal = "KR"))
+        assertNull(buildConfigWtf(fixed, WowProduct.FOREVER, "1920x1080", portal = "KR", forcePortal = true))
+    }
+
+    @Test
     fun forcedPortalReplacesAnExistingOne() {
         val existing = listOf(
             "SET gxApi \"D3D11\"", "SET portal \"US\"", "SET agentUID \"wowf\"", "SET gxFullscreenResolution \"1920x1080\"",
             "SET gxWindowedResolution \"1920x1080\"", "SET showScreenNarrationDialog \"0\"", "SET accessibilityScreenNarrationEnabled \"0\"",
+            WORK_OPTIMS_LINE,
         )
         assertNull(buildConfigWtf(existing, WowProduct.FOREVER, "1920x1080", portal = "EU"))
         val forced = buildConfigWtf(existing, WowProduct.FOREVER, "1920x1080", portal = "EU", forcePortal = true)!!
@@ -98,6 +153,29 @@ class GameConfigTest {
         assertTrue("SET showScreenNarrationDialog \"0\"" in updated)
         val chosen = updated.map { if (it.startsWith("SET accessibilityScreenNarrationEnabled")) "SET accessibilityScreenNarrationEnabled \"1\"" else it }
         assertNull(buildConfigWtf(chosen, WowProduct.FOREVER, "1920x1080"))
+    }
+
+    @Test
+    fun foreverStartsWithTheServersGraphicsSettingSoItSkipsTheRebuild() {
+        assertTrue(WORK_OPTIMS_LINE in buildConfigWtf(null, WowProduct.FOREVER, "1920x1080")!!)
+        assertTrue(buildConfigWtf(null, WowProduct.CLASSIC_ERA, "1920x1080")!!.none { it.startsWith("SET ClientSettings_") })
+        val old = listOf(
+            "SET gxApi \"D3D11\"", "SET portal \"US\"", "SET agentUID \"wowf\"", "SET gxFullscreenResolution \"1920x1080\"",
+            "SET gxWindowedResolution \"1920x1080\"", "SET showScreenNarrationDialog \"0\"", "SET accessibilityScreenNarrationEnabled \"0\"",
+        )
+        val updated = buildConfigWtf(old, WowProduct.FOREVER, "1920x1080")!!
+        assertEquals(old.toSet() + WORK_OPTIMS_LINE, updated.toSet())
+        assertNull(buildConfigWtf(updated, WowProduct.FOREVER, "1920x1080"))
+        // A value the game saved from the server is newer than ours and stays.
+        val newer = old + "SET ClientSettings_WORK_OPTIMS_BY_API_MASK \"16002,0xf,0x0,0x1ff\""
+        assertNull(buildConfigWtf(newer, WowProduct.FOREVER, "1920x1080"))
+    }
+
+    @Test
+    fun configPortalReadsTheLoginServer() {
+        assertEquals("EU", configPortal(listOf("SET gxApi \"D3D11\"", "SET portal \"EU\"")))
+        assertEquals("US", configPortal(buildConfigWtf(null, WowProduct.FOREVER, "1920x1080")!!))
+        assertNull(configPortal(listOf("SET gxApi \"D3D11\"")))
     }
 
     @Test
@@ -168,6 +246,7 @@ class GameConfigTest {
             "SET gxWindowedResolution \"1920x1080\"",
             "SET showScreenNarrationDialog \"0\"",
             "SET accessibilityScreenNarrationEnabled \"0\"",
+            WORK_OPTIMS_LINE,
         )
         assertNull(buildConfigWtf(existing, WowProduct.FOREVER, "1920x1080"))
     }
@@ -188,7 +267,7 @@ class GameConfigTest {
         val existing = listOf(
             "SET gxApi \"D3D11\"", "SET portal \"US\"", "SET agentUID \"wowf\"", "SET gxFullscreenResolution \"1920x1080\"",
             "SET gxWindowedResolution \"1920x1080\"", "SET showScreenNarrationDialog \"0\"", "SET accessibilityScreenNarrationEnabled \"0\"",
-            "SET accountList \"!WoW1|WoW2|\"",
+            "SET accountList \"!WoW1|WoW2|\"", WORK_OPTIMS_LINE,
         )
         // Without a pick, the game's own list stays as it is.
         assertNull(buildConfigWtf(existing, WowProduct.FOREVER, "1920x1080"))

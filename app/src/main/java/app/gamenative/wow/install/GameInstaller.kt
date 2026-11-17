@@ -1,7 +1,9 @@
 package app.gamenative.wow.install
 
+import app.gamenative.ui.screen.wow.WowClientDownloader
 import app.gamenative.utils.Net
 import app.gamenative.wow.product.BuildInfo
+import app.gamenative.wow.product.GameRegions
 import app.gamenative.wow.product.WowProduct
 import app.gamenative.wow.tact.ArchiveIndex
 import app.gamenative.wow.tact.Blte
@@ -116,18 +118,19 @@ data class InstallPlan(
  * mistaken for a complete one.
  */
 class GameInstaller(
-    private val patchBase: String = "http://us.patch.battle.net:1119",
+    // Blizzard's HTTPS version service; it lists every region's build like the plain-HTTP patch server on port 1119.
+    private val patchBase: String = "https://us.version.battle.net/v2/products",
     private val http: OkHttpClient = Net.http,
-    private val cdnScheme: String = "http",
+    private val cdnScheme: String = "https",
     private val usableSpace: (File) -> Long = { generateSequence(it) { f -> f.parentFile }.first { f -> f.exists() }.usableSpace },
 ) {
     suspend fun plan(request: InstallRequest): InstallPlan = withContext(Dispatchers.IO) {
         val req = request.keepingInstallRegion()
         val versions = Psv.parse(fetchText("$patchBase/${req.product.code}/versions"))
-        val row = versions.firstOrNull { it["Region"] == req.region } ?: versions.firstOrNull()
+        val row = WowClientDownloader.regionRow(versions, "Region", req.region)
             ?: throw IOException("Blizzard's patch service has no build for ${req.product.code}")
         val cdns = Psv.parse(fetchText("$patchBase/${req.product.code}/cdns"))
-        val cdnRow = cdns.firstOrNull { it["Name"] == req.region } ?: cdns.firstOrNull() ?: throw IOException("No CDN listed")
+        val cdnRow = WowClientDownloader.regionRow(cdns, "Name", req.region) ?: throw IOException("No CDN listed")
         val cdn = Cdn(cdnRow.getValue("Hosts").split(" ").filter { it.isNotBlank() }, cdnRow.getValue("Path"), http, cdnScheme)
 
         val buildConfigKey = row.getValue("BuildConfig")
@@ -300,7 +303,8 @@ class GameInstaller(
             "IM Size" to p.installSize.toString(),
             "CDN Path" to p.cdn.path,
             "CDN Hosts" to p.cdn.hosts.joinToString(" "),
-            "CDN Servers" to p.cdn.hosts.joinToString(" ") { "$cdnScheme://$it/?maxhosts=4" },
+            // For the game client's own streaming, which has always used these plain-HTTP URLs; our downloads use HTTPS.
+            "CDN Servers" to p.cdn.hosts.joinToString(" ") { "http://$it/?maxhosts=4" },
             "Tags" to tags(req),
             "Armadillo" to "",
             "Last Activated" to Instant.now().toString(),
@@ -310,13 +314,23 @@ class GameInstaller(
         )
         val info = when {
             existing == null -> BuildInfo(BUILD_INFO_HEADER, listOf(values))
-            // Repair or update: only the build columns change; Branch and Tags (region, language) stay.
-            existing.rows.any { it["Product"] == req.product.code } -> existing.withUpdatedActive(req.product, values - KEEP_ON_UPDATE)
+            // Repair or update: the build columns change and the language stays. Branch and the region tags follow the
+            // region the build was picked for, so an update after a region switch doesn't leave the old region behind.
+            existing.rows.any { it["Product"] == req.product.code } ->
+                existing.withUpdatedActive(req.product, values - KEEP_ON_UPDATE + movedRegion(existing.active(req.product), req))
             else -> existing.copy(rows = existing.rows + values)
         }
         val temp = File(req.root, "${BuildInfo.FILE_NAME}.tmp")
         temp.writeText(info.serialize())
         if (!temp.renameTo(File(req.root, BuildInfo.FILE_NAME))) throw IOException("Couldn't write ${BuildInfo.FILE_NAME}")
+    }
+
+    /** Branch and Tags for [row] moved to [req]'s region; empty when it's already there. */
+    private fun movedRegion(row: Map<String, String>?, req: InstallRequest): Map<String, String> {
+        val branch = row?.get("Branch").orEmpty()
+        if (req.region.isBlank() || branch.equals(req.region, ignoreCase = true)) return emptyMap()
+        val tags = row?.get("Tags")?.takeIf { it.isNotBlank() }?.let { regionTags(it, req.region) } ?: tags(req)
+        return mapOf("Branch" to req.region, "Tags" to tags)
     }
 
     private fun tags(req: InstallRequest): String {
@@ -352,16 +366,26 @@ class GameInstaller(
             "Last Activated!STRING:0", "Version!STRING:0", "KeyRing!HEX:16", "Product!STRING:0",
         )
 
+        // The region parts of Tags: "EU?", "acct-EUA?", "geoip-EU?".
+        private val REGION_TAG = Regex("""(?<=^|[\s:-])[A-Z]{2}(?=A?\?)""")
+
+        /** [tags] with every region part set to [region], everything else (platform, language) unchanged. */
+        internal fun regionTags(tags: String, region: String): String = tags.replace(REGION_TAG, region.uppercase())
+
         fun configPath(key: String) = "Data/config/${key.substring(0, 2)}/${key.substring(2, 4)}/$key"
     }
 }
 
-/** A repair or update keeps the region and language the install was made with. */
+/**
+ * A repair or update keeps the language the install was made with, and gets the build of the region the player
+ * picked in Settings, else the install's own. Regions patch on different days, so an EU player on a US-made
+ * install needs the EU build or the realms won't match (#36).
+ */
 internal fun InstallRequest.keepingInstallRegion(): InstallRequest {
     val row = BuildInfo.read(root)?.active(product)?.takeIf { it["Product"] == product.code } ?: return this
     val tags = row["Tags"].orEmpty().split(" ", ":")
     val locale = tags.firstOrNull { Regex("[a-z]{2}[A-Z]{2}").matches(it) } ?: locale
-    val region = row["Branch"]?.takeIf { it.length == 2 } ?: region
+    val region = GameRegions.chosen?.code ?: row["Branch"]?.takeIf { it.length == 2 } ?: region
     return copy(locale = locale, region = region)
 }
 

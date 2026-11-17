@@ -53,6 +53,7 @@ The game runs as Blizzard's own Windows ARM64 client under Wine, with DXVK and a
 | :--- | :--- | :--- |
 | AYN Thor | Snapdragon 8 Gen 2 | Reaches the game world with controller support |
 | Retroid Pocket 6 | Snapdragon 8 Gen 2 | Reported working |
+| Retroid Pocket G2 | Snapdragon G2 Gen 2 | Reported working at 720p, graphics quality 4 |
 | AYN Odin 2 / Odin 2 Mini | Snapdragon 8 Gen 2 | Expected to work |
 | AYN Odin 3 / Odin Portal | Snapdragon 8 Elite | Supported through the bundled Adreno 8xx driver |
 | Xiaomi tablet (model 25097RP43G) | Snapdragon 8s Gen 4 | Reported working |
@@ -156,6 +157,7 @@ Because the game needs the password in plain text for those few seconds, any app
 
 - **Game files** shows where the game is installed and its version. **Install or repair** checks every file and downloads only what's missing or damaged. Once WoW Forever launches, this screen also offers to switch a beta install to the launch version, reusing the game data you already have.
 - **Download all game data** fetches everything the game would otherwise download while you play, about 50 GB, so it never waits on the network for world data. It suits slow connections and can run overnight: start it, open **Overnight mode**, and leave the device on its charger. Overnight mode keeps the app on screen at the lowest brightness, on a black background with the progress moving every minute, so nothing burns in. It also stops Android 15 and later from pausing the download after six hours in the background. You can keep playing while it runs; the new data takes over the next time the game is closed.
+- **Clear game data** deletes the world data so the game downloads it again the next time you press **Play**, about 67 GB. Your settings, addons and login stay.
 - **Settings** shows the app version and checks for app updates. It also holds:
   - **Game version** and **Region** (Americas, Europe, Korea or Taiwan).
   - **Addon sources**, showing which addon sites this build can use.
@@ -188,6 +190,8 @@ These versions are experimental and get little support. They may run poorly or n
 | *CAS system was unable to initialize* | The game folder is missing `.build.info`. Run **Game files → Install or repair**, or copy the file again from your PC install. |
 | *No realms available* | The game is out of date. Open the app with Wi-Fi on and accept the update. |
 | The game is slow the first time, or text and characters are missing | It's downloading its world data in the background. Give it time on Wi-Fi, or use **Game files → Download all game data** on a slow connection. |
+| The login buttons are missing, or the game looks frozen and nothing animates | Restart your device. The game's clock stops after about 50 days without a restart, and the app warns you when you press **Play**. |
+| *ERROR #134: Failed to download required build info asset* | The game can't start with Italian text. The app now switches the text to English and keeps Italian audio, so update the app. |
 | The keyboard doesn't appear in the game | Force-stop Gboard under **Settings → Apps → Gboard** and open the keyboard again. |
 | The app returns to the home screen after "Starting World of Warcraft" | Check the files in the game's `Errors` folder (`_forever_/Errors` or `_classic_beta_/Errors`). |
 | "This device can't run the game" | The device has no Adreno GPU. The game needs a Snapdragon chip. |
@@ -200,7 +204,7 @@ These versions are experimental and get little support. They may run poorly or n
 
 ### Reporting a problem
 
-Under **Settings → Troubleshooting**, turn on debug logging, make the problem happen again, then use **Share debug report** and attach the zip to your [GitHub issue](https://github.com/YoruDev-Ryland/WoWForeverywhere/issues). The report holds your device details, the app's settings and the app's and game's logs. Email addresses and your saved login are removed from it. Turn debug logging off again afterwards.
+Under **Settings → Troubleshooting**, turn on debug logging, make the problem happen again, then use **Share debug report** and attach the zip to your [GitHub issue](https://github.com/YoruDev-Ryland/WoWForeverywhere/issues). The report holds your device details, the app's settings and the app's and game's logs. Email addresses and your saved login are removed from it. Turn debug logging off again afterwards. While logging is on, the game doesn't start by itself when you open the app, so its logs aren't replaced before you share them.
 
 ## Building from source
 

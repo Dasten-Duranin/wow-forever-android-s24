@@ -50,6 +50,7 @@ import app.gamenative.utils.renderReleaseNotes
 import app.gamenative.wow.product.WowProduct
 import app.gamenative.utils.LsfgVkManager
 import app.gamenative.wow.FrameGeneration
+import app.gamenative.wow.product.GameRegion
 import app.gamenative.wow.product.GameRegions
 import app.gamenative.wow.product.RenderSize
 import app.gamenative.wow.product.RenderSizes
@@ -1062,7 +1063,14 @@ internal fun prepareLaunch(
                 "Frame generation is off for this session: your Lossless.dll doesn't have the shaders it needs. Choose another in Settings.",
             )
             false
+        }) && (!FrameGeneration.sitsOutAfterRebuildCrash(context, File(gameRoot, "${product.flavorDir}/Logs/gx.log")) || run {
+            Timber.w("Frame generation skipped: the last start crashed while the game rebuilt its graphics device")
+            app.gamenative.ui.util.SnackbarManager.show(
+                "Frame generation is off for this start: the game crashed last time while applying a graphics update. It's back on next time.",
+            )
+            false
         })
+        FrameGeneration.setUsedLastLaunch(context, frameGeneration)
         putExtra(LsfgVkManager.EXTRA_ARMED, frameGeneration.toString())
         saveData()
     }
@@ -1112,14 +1120,43 @@ private const val GX_API_LINE = "SET gxApi \"D3D11\""
  */
 private val NARRATOR_KEYS = setOf("showScreenNarrationDialog", "accessibilityScreenNarrationEnabled")
 
+/**
+ * A client setting Blizzard's servers started sending WoW Forever on 2026-11-11. The first time the game gets it, it
+ * rebuilds its graphics device to apply it and then saves it to Config.wtf. The frame-generation layer didn't survive
+ * that rebuild, so with frame generation on the game crashed at every start before it could save it (#46). Starting with
+ * the current value already saved skips the rebuild. If Blizzard changes the value the game just rebuilds once more,
+ * and [FrameGeneration.sitsOutAfterRebuildCrash] covers that start.
+ */
+private const val WORK_OPTIMS_KEY = "ClientSettings_WORK_OPTIMS_BY_API_MASK"
+internal const val WORK_OPTIMS_LINE = "SET $WORK_OPTIMS_KEY \"16001,0xe,0x0,0x1ff\""
+
 /** Retail only gets what it needs to start and use a controller; the rest is a Classic-era handheld preset. */
 private val RETAIL_DEFAULTS = setOf("portal", "agentUID", "gxApi", "textLocale", "audioLocale", "GamePadEnable", "InputDeviceInterfaceStyle") + NARRATOR_KEYS
+
+/**
+ * The text language to give the game for [locale]. With Italian text, client 1.60.1.70862 stops at start-up with
+ * ERROR #134 "Failed to download required build info asset" (issue #22), so it gets English. Italian audio works.
+ */
+internal fun gameTextLocale(locale: String) = if (locale.equals(BROKEN_TEXT_LOCALE, ignoreCase = true)) "enUS" else locale
+
+private const val BROKEN_TEXT_LOCALE = "itIT"
+private const val TEXT_LOCALE = "SET textLocale "
+
+/** The text language set in Config.wtf [lines], or null if there is none. */
+internal fun configTextLocale(lines: List<String>): String? = configValue(lines, TEXT_LOCALE)
+
+/** The login portal set in Config.wtf [lines] ("US", "EU", ...), or null if there is none. */
+internal fun configPortal(lines: List<String>): String? = configValue(lines, "SET portal ")
+
+private fun configValue(lines: List<String>, prefix: String): String? =
+    lines.lastOrNull { it.trim().startsWith(prefix, ignoreCase = true) }
+        ?.substringAfter('"', "")?.substringBefore('"')?.takeIf { it.isNotEmpty() }
 
 private fun configDefaults(product: WowProduct, locale: String, portal: String) = linkedMapOf(
     "portal" to "\"$portal\"",
     "agentUID" to "\"${product.code}\"",
     "gxApi" to "\"D3D11\"",
-    "textLocale" to "\"$locale\"",
+    "textLocale" to "\"${gameTextLocale(locale)}\"",
     "audioLocale" to "\"$locale\"",
     "gxMaximize" to "\"1\"",
     "graphicsQuality" to "\"0\"",
@@ -1190,8 +1227,12 @@ internal fun buildConfigWtf(
 ): List<String>? {
     if (existing == null) {
         val defaults = configDefaults(product, locale, portal) + RESOLUTION_KEYS.associateWith { "\"$screenSize\"" }
-        return defaults.entries.map { "SET ${it.key} ${it.value}" } + listOfNotNull(gameAccount?.let { accountListLine(null, it) })
+        return defaults.entries.map { "SET ${it.key} ${it.value}" } +
+            listOfNotNull(gameAccount?.let { accountListLine(null, it) }, WORK_OPTIMS_LINE.takeIf { product == WowProduct.FOREVER })
     }
+    // Only added when missing: a value the game saved from the server is newer than ours.
+    val missingWorkOptims = product == WowProduct.FOREVER &&
+        existing.none { it.trim().startsWith("SET $WORK_OPTIMS_KEY ", ignoreCase = true) }
     val accountLine = gameAccount?.let { account -> accountListLine(existing.lastOrNull { it.startsWith(ACCOUNT_LIST, ignoreCase = true) }, account) }
     val staleAccount = accountLine != null && existing.none { it == accountLine }
     val staleResolutionKeys = RESOLUTION_KEYS.filter { key -> existing.none { it == "SET $key \"$screenSize\"" } }
@@ -1199,26 +1240,35 @@ internal fun buildConfigWtf(
     // Once the player has picked a region ([forcePortal]) the portal follows it; before that a hand-edited one stays.
     val portalLine = "SET portal \"$portal\""
     val missingPortal = existing.none { it.startsWith("SET portal ", ignoreCase = true) }
-    val wrongPortal = forcePortal && existing.any { it.startsWith("SET portal ", ignoreCase = true) && it != portalLine }
+    // A "TW" portal is a login server that doesn't exist (Taiwan uses KR), so it's replaced even if hand-edited.
+    val deadPortal = existing.any { it.trim().equals(DEAD_PORTAL_LINE, ignoreCase = true) }
+    val newPortalLine = if (forcePortal) portalLine else "SET portal \"${GameRegion.TW.portal}\""
+    val wrongPortal = (forcePortal || deadPortal) && existing.any { it.startsWith("SET portal ", ignoreCase = true) && it != newPortalLine }
     val agentLine = "SET agentUID \"${product.code}\""
     val wrongAgent = existing.any { it.startsWith("SET agentUID ", ignoreCase = true) && it != agentLine }
     val missingNarrator = NARRATOR_KEYS.filter { key -> existing.none { it.startsWith("SET $key ", ignoreCase = true) } }
-    if (existing.any { it == GX_API_LINE } && staleResolutionKeys.isEmpty() && !missingPortal && !wrongPortal && !wrongAgent && missingNarrator.isEmpty() && !staleAccount) return null
+    val brokenText = configTextLocale(existing)?.equals(BROKEN_TEXT_LOCALE, ignoreCase = true) == true
+    if (existing.any { it == GX_API_LINE } && staleResolutionKeys.isEmpty() && !missingPortal && !wrongPortal && !wrongAgent && missingNarrator.isEmpty() && !staleAccount && !brokenText && !missingWorkOptims) return null
     return existing.filterNot { line ->
         line.startsWith("SET gxApi ", ignoreCase = true) ||
             (wrongPortal && line.startsWith("SET portal ", ignoreCase = true)) ||
             (wrongAgent && line.startsWith("SET agentUID ", ignoreCase = true)) ||
             (staleAccount && line.startsWith(ACCOUNT_LIST, ignoreCase = true)) ||
+            (brokenText && line.trim().startsWith(TEXT_LOCALE, ignoreCase = true)) ||
             staleResolutionKeys.any { line.startsWith("SET $it ", ignoreCase = true) }
     } + listOfNotNull(
         GX_API_LINE,
-        portalLine.takeIf { missingPortal || wrongPortal },
+        portalLine.takeIf { missingPortal },
+        newPortalLine.takeIf { wrongPortal },
         agentLine.takeIf { wrongAgent },
         accountLine.takeIf { staleAccount },
+        "$TEXT_LOCALE\"${gameTextLocale(BROKEN_TEXT_LOCALE)}\"".takeIf { brokenText },
+        WORK_OPTIMS_LINE.takeIf { missingWorkOptims },
     ) + staleResolutionKeys.map { "SET $it \"$screenSize\"" } + missingNarrator.map { "SET $it \"0\"" }
 }
 
 private const val ACCOUNT_LIST = "SET accountList "
+private const val DEAD_PORTAL_LINE = "SET portal \"TW\""
 
 /**
  * The game's account list ([existing], e.g. `SET accountList "WoW1|!WoW2|"`) with [account] marked by `!`
@@ -1243,7 +1293,7 @@ internal fun installLocale(root: File, product: WowProduct): String =
 internal fun installPortal(root: File, product: WowProduct): String {
     if (product == WowProduct.BETA) return product.portal
     val branch = app.gamenative.wow.product.BuildInfo.read(root)?.active(product)?.get("Branch")
-    return GameRegions.chosen?.portal ?: branch?.takeIf { it.length == 2 }?.uppercase() ?: product.portal
+    return GameRegions.chosen?.portal ?: GameRegion.fromCode(branch)?.portal ?: branch?.takeIf { it.length == 2 }?.uppercase() ?: product.portal
 }
 
 private val RESOLUTION_KEYS = listOf("gxFullscreenResolution", "gxWindowedResolution")

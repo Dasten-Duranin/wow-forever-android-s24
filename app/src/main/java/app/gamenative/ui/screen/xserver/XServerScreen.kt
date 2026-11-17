@@ -111,11 +111,13 @@ import app.gamenative.utils.ContainerUtils
 import app.gamenative.utils.downloader.CoreDriverDownloader
 import app.gamenative.utils.LsfgQuickMenuHelper
 import app.gamenative.utils.LsfgVkManager
+import app.gamenative.utils.MachineIdentityApply
 import app.gamenative.utils.downloader.DXWrapperDownloader
 import app.gamenative.utils.downloader.GraphicsDriverDownloader
 import app.gamenative.utils.BrightnessManager
 import app.gamenative.utils.downloader.WinComponentDownloader
 import app.gamenative.utils.WineProcessSnapshotHelper
+import app.gamenative.wow.ui.BackPressGuard
 import com.winlator.alsaserver.ALSAClient
 import com.winlator.container.Container
 import com.winlator.container.ContainerFiles
@@ -1437,7 +1439,9 @@ fun XServerScreen(
     // BackHandler registers with OnBackPressedDispatcher to catch that path.
     // Legacy flavor (targetSdk 28) still receives BACK as a KeyEvent, so it keeps
     // master's event-bus route via registerBackAction(gameBack) below.
-    BackHandler(enabled = BuildConfig.MODERN_ANDROID) { gameBack() }
+    BackHandler(enabled = BuildConfig.MODERN_ANDROID) {
+        if (BackPressGuard.onCallback(SystemClock.uptimeMillis())) gameBack()
+    }
 
     DisposableEffect(container) {
         registerBackAction(gameBack)
@@ -3565,6 +3569,11 @@ private fun setupXEnvironment(
     val contentsManager = ContentsManager(context)
     contentsManager.syncContents()
     envVars.put("LC_ALL", lc_all)
+    // Xlib turns a key's keysym into text in the X locale's charset, and the container has no X locale data, so it
+    // could only produce ASCII: accented letters typed on the on-screen keyboard (ã, é, ç) reached Wine as nothing
+    // ("não" became "no", #38). With Latin-1, Wine gets the byte and maps it to the letter itself; keysyms above
+    // U+00FF (Cyrillic and the rest) still get no bytes from Xlib and keep going through Wine's own Unicode mapping.
+    envVars.put("_XKB_CHARSET", "ISO8859-1")
     envVars.put("MESA_DEBUG", "silent")
     envVars.put("MESA_NO_ERROR", "1")
     envVars.put("WINEPREFIX", imageFs.wineprefix)
@@ -4089,6 +4098,10 @@ private suspend fun setupWineSystemFiles(
         container.putExtra("startupSelection", startupSelection)
         containerDataChanged = true
     }
+
+    // Own stable machine identity (MachineGuid, computer name, volume serial) in the WoW prefix. After
+    // everything above, so refreshSkeleton / component extraction can never leave the shared defaults.
+    MachineIdentityApply.applyToContainer(context, container)
 
     if (containerDataChanged) container.saveData()
 }

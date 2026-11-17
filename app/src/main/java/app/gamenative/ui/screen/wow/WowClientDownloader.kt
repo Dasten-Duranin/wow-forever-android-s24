@@ -2,6 +2,7 @@ package app.gamenative.ui.screen.wow
 
 import app.gamenative.utils.Net
 import app.gamenative.wow.product.BuildInfo
+import app.gamenative.wow.product.GameRegions
 import app.gamenative.wow.product.WowProduct
 import app.gamenative.wow.product.detectProduct
 import app.gamenative.wow.tact.ArchiveIndex
@@ -26,7 +27,8 @@ object WowClientDownloader {
     const val BUILD_INFO = BuildInfo.FILE_NAME
     private const val PLATFORM_ARCH = "arm64"
     private const val EXCLUDED_ARCH = "x86_64"
-    private fun patchUrl(product: WowProduct) = "http://us.patch.battle.net:1119/${product.code}"
+    // Blizzard's HTTPS version service; it lists every region's build like the plain-HTTP patch server on port 1119.
+    private fun patchUrl(product: WowProduct) = "https://us.version.battle.net/v2/products/${product.code}"
     private const val DEFAULT_CDN_PATH = "tpr/wow"
     private val DEFAULT_CDN_HOSTS = listOf("level3.blizzard.com", "us.cdn.blizzard.com")
 
@@ -86,7 +88,9 @@ object WowClientDownloader {
             Timber.w("checkVersion: response body is null or unsuccessful")
             return null
         }
-        val remoteRow = Psv.parse(versions).firstOrNull()
+        // Regions patch on different days, so compare with the region the player logs into, not the first (US) row (#36).
+        val region = GameRegions.effective(row["Branch"]).code
+        val remoteRow = regionRow(Psv.parse(versions), "Region", region)
             ?: run {
                 Timber.w("checkVersion: no remote row in $versions")
                 return null
@@ -99,10 +103,10 @@ object WowClientDownloader {
         val remoteBuildKey = remoteRow["BuildConfig"].orEmpty()
 
         val cdns = runCatching { fetchText("${patchUrl(product)}/cdns") }.getOrNull()?.let(Psv::parse).orEmpty()
-        val cdnsRow = cdns.firstOrNull { it["Name"] == "us" } ?: cdns.firstOrNull()
+        val cdnsRow = regionRow(cdns, "Name", region)
 
         val isOutdated = localVersion != remoteVersion || (remoteBuildKey.isNotBlank() && localBuildKey != remoteBuildKey)
-        Timber.i("checkVersion: localVersion=$localVersion, remoteVersion=$remoteVersion, isOutdated=$isOutdated")
+        Timber.i("checkVersion: region=$region, localVersion=$localVersion, remoteVersion=$remoteVersion, isOutdated=$isOutdated")
         return VersionCheckResult(
             localVersion = localVersion,
             remoteVersion = remoteVersion,
@@ -113,6 +117,12 @@ object WowClientDownloader {
             remoteCdnPath = cdnsRow?.get("Path") ?: row["CDN Path"] ?: DEFAULT_CDN_PATH,
         )
     }
+
+    /** The patch service row for [region] in [column], else the US row, else the first if neither is listed. */
+    internal fun regionRow(rows: List<Map<String, String>>, column: String, region: String): Map<String, String>? =
+        rows.firstOrNull { it[column].equals(region, ignoreCase = true) }
+            ?: rows.firstOrNull { it[column].equals("us", ignoreCase = true) }
+            ?: rows.firstOrNull()
 
     fun updateGame(gameRoot: File, product: WowProduct, target: VersionCheckResult, onStatus: (String) -> Unit) {
         val cdn = Cdn(
