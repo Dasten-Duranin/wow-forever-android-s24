@@ -42,6 +42,7 @@ class PluviaApp : Application() {
         app.gamenative.wow.product.RenderSizes.load(this)
         app.gamenative.wow.product.GpuProfileChoice.load(this)
         app.gamenative.wow.debug.MemoryLog.start(this)
+        resetMachineIdentityOnce()
         app.gamenative.wow.FrameGeneration.init(this)
         android.system.Os.setenv("EVSHIM_BASE_PATH", filesDir.absolutePath, true)
 
@@ -184,4 +185,17 @@ class PluviaApp : Application() {
         }
     }
 
+
+    /**
+     * Fork only, one time: drop the machine identity so the next game start makes a fresh one. The first
+     * identity on this phone was rejected by Blizzard's anti-fraud check (BLZ51914400) while the same account
+     * logs in from a PC.
+     */
+    private fun resetMachineIdentityOnce() {
+        val prefs = getSharedPreferences("fork_migrations", MODE_PRIVATE)
+        if (prefs.getBoolean("identity_reset_2026_11_17", false)) return
+        runCatching { app.gamenative.utils.MachineIdentityApply.identityFile(this).delete() }
+        prefs.edit().putBoolean("identity_reset_2026_11_17", true).apply()
+        Timber.i("Fork migration: machine identity reset once")
+    }
 }
