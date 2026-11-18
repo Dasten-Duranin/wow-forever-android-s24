@@ -920,8 +920,14 @@ internal data class GpuProfile(
          */
         val XCLIPSE = GpuProfile(XCLIPSE_DRIVER, "", "1280x720", "Xclipse 940", "Exynos 2400 / Xclipse 940", maxDeviceMemory = 512, isXclipse = true)
 
+        /**
+         * Adreno 722 (Retroid Pocket Duo's CQ7790S): the device's own driver ("System"), because the Turnip builds
+         * we ship don't see this GPU at all, so WoW found no usable graphics card (#65).
+         */
+        val ADRENO_722 = GpuProfile("System", "", "1280x720", "Adreno 722", "Adreno 722")
+
         /** Every profile, in the order Settings lists them. */
-        val ALL = listOf(ADRENO_740, ADRENO_8XX, XCLIPSE, QUEST)
+        val ALL = listOf(ADRENO_740, ADRENO_8XX, ADRENO_722, XCLIPSE, QUEST)
 
         /** The profile picked in Settings, or the one detected for this device. */
         fun detect(context: Context): GpuProfile =
@@ -932,6 +938,7 @@ internal data class GpuProfile(
             isXclipse940(if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Build.SOC_MODEL else "", Build.HARDWARE, Build.BOARD) -> XCLIPSE
             isMetaQuest3(Build.MANUFACTURER, Build.MODEL, if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Build.SOC_MODEL else "") -> QUEST
             isAdreno8xxDevice(context) -> ADRENO_8XX
+            isAdreno722(runCatching { GPUInformation.getRenderer(context) }.getOrNull().orEmpty()) -> ADRENO_722
             else -> ADRENO_740
         }
 
@@ -941,7 +948,7 @@ internal data class GpuProfile(
          */
         fun isSupportedDevice(context: Context): Boolean =
             app.gamenative.wow.product.GpuProfileChoice.chosen != null ||
-                autoDetect(context).let { it.isXclipse || it == QUEST } ||
+                autoDetect(context).let { it.isXclipse || it == QUEST || it == ADRENO_722 } ||
                 runCatching { GPUInformation.isAdrenoGPU(context) }.getOrDefault(true)
 
         private fun isAdreno8xxDevice(context: Context): Boolean = isAdreno8xx(
@@ -975,6 +982,9 @@ internal fun isAdreno8xx(renderer: String, socModel: String, hardware: String): 
 /** Exynos 2400 / 2400e ("s5e9945"), whose GPU is the Xclipse 940. */
 internal fun isXclipse940(socModel: String, hardware: String, board: String): Boolean =
     listOf(socModel, hardware, board).any { it.contains("s5e9945", ignoreCase = true) }
+
+/** An Adreno 722, from the renderer name ("Adreno (TM) 722"). */
+internal fun isAdreno722(renderer: String): Boolean = Regex("""adreno\D*722\b""", RegexOption.IGNORE_CASE).containsMatchIn(renderer)
 
 /** Meta Quest 3 or 3S: Oculus hardware with the Snapdragon XR2 Gen 2 (SXR2230P). */
 internal fun isMetaQuest3(manufacturer: String, model: String, socModel: String): Boolean =
@@ -1141,6 +1151,7 @@ internal fun gameTextLocale(locale: String) = if (locale.equals(BROKEN_TEXT_LOCA
 
 private const val BROKEN_TEXT_LOCALE = "itIT"
 private const val TEXT_LOCALE = "SET textLocale "
+private const val AUDIO_LOCALE = "SET audioLocale "
 
 /** The text language set in Config.wtf [lines], or null if there is none. */
 internal fun configTextLocale(lines: List<String>): String? = configValue(lines, TEXT_LOCALE)
@@ -1201,7 +1212,8 @@ private fun ensureGameConfig(root: File, product: WowProduct, screenSize: String
         installLocale(root, product),
         installPortal(root, product),
         forcePortal = GameRegions.chosen != null,
-        gameAccount = app.gamenative.wow.product.GameAccounts.chosen?.let(app.gamenative.wow.product.GameAccounts::name),
+        gameAccount = app.gamenative.wow.product.GameAccounts.chosen,
+        forceLocale = app.gamenative.wow.product.GameLanguages.chosen != null,
     ) ?: return
     configWtf.parentFile?.mkdirs()
     configWtf.writeText(updated.joinToString("\n") + "\n")
@@ -1224,6 +1236,7 @@ internal fun buildConfigWtf(
     portal: String = product.portal,
     forcePortal: Boolean = false,
     gameAccount: String? = null,
+    forceLocale: Boolean = false,
 ): List<String>? {
     if (existing == null) {
         val defaults = configDefaults(product, locale, portal) + RESOLUTION_KEYS.associateWith { "\"$screenSize\"" }
@@ -1235,6 +1248,9 @@ internal fun buildConfigWtf(
         existing.none { it.trim().startsWith("SET $WORK_OPTIMS_KEY ", ignoreCase = true) }
     val accountLine = gameAccount?.let { account -> accountListLine(existing.lastOrNull { it.startsWith(ACCOUNT_LIST, ignoreCase = true) }, account) }
     val staleAccount = accountLine != null && existing.none { it == accountLine }
+    // Without a pick the game's saved list goes, so it picks again: a saved list broke the next login with
+    // BLZ51914400, and clearing it (by editing the username) let the same login through (#62).
+    val savedAccountList = gameAccount == null && existing.any { it.startsWith(ACCOUNT_LIST, ignoreCase = true) }
     val staleResolutionKeys = RESOLUTION_KEYS.filter { key -> existing.none { it == "SET $key \"$screenSize\"" } }
     // A config carried over from another product (e.g. beta to launch) gets this product's portal and agent.
     // Once the player has picked a region ([forcePortal]) the portal follows it; before that a hand-edited one stays.
@@ -1248,13 +1264,19 @@ internal fun buildConfigWtf(
     val wrongAgent = existing.any { it.startsWith("SET agentUID ", ignoreCase = true) && it != agentLine }
     val missingNarrator = NARRATOR_KEYS.filter { key -> existing.none { it.startsWith("SET $key ", ignoreCase = true) } }
     val brokenText = configTextLocale(existing)?.equals(BROKEN_TEXT_LOCALE, ignoreCase = true) == true
-    if (existing.any { it == GX_API_LINE } && staleResolutionKeys.isEmpty() && !missingPortal && !wrongPortal && !wrongAgent && missingNarrator.isEmpty() && !staleAccount && !brokenText && !missingWorkOptims) return null
+    // Once a language is picked in Settings, the game's text and audio follow the install's language, which a repair
+    // moved to the pick (#63). Until then a language set in the game stays.
+    val textLine = "$TEXT_LOCALE\"${gameTextLocale(locale)}\""
+    val audioLine = "$AUDIO_LOCALE\"$locale\""
+    val wrongLocale = forceLocale && (existing.none { it.trim() == textLine } || existing.none { it.trim() == audioLine })
+    if (existing.any { it == GX_API_LINE } && staleResolutionKeys.isEmpty() && !missingPortal && !wrongPortal && !wrongAgent && missingNarrator.isEmpty() && !staleAccount && !savedAccountList && !brokenText && !wrongLocale && !missingWorkOptims) return null
     return existing.filterNot { line ->
         line.startsWith("SET gxApi ", ignoreCase = true) ||
             (wrongPortal && line.startsWith("SET portal ", ignoreCase = true)) ||
             (wrongAgent && line.startsWith("SET agentUID ", ignoreCase = true)) ||
-            (staleAccount && line.startsWith(ACCOUNT_LIST, ignoreCase = true)) ||
-            (brokenText && line.trim().startsWith(TEXT_LOCALE, ignoreCase = true)) ||
+            ((staleAccount || savedAccountList) && line.startsWith(ACCOUNT_LIST, ignoreCase = true)) ||
+            ((brokenText || wrongLocale) && line.trim().startsWith(TEXT_LOCALE, ignoreCase = true)) ||
+            (wrongLocale && line.trim().startsWith(AUDIO_LOCALE, ignoreCase = true)) ||
             staleResolutionKeys.any { line.startsWith("SET $it ", ignoreCase = true) }
     } + listOfNotNull(
         GX_API_LINE,
@@ -1262,12 +1284,14 @@ internal fun buildConfigWtf(
         newPortalLine.takeIf { wrongPortal },
         agentLine.takeIf { wrongAgent },
         accountLine.takeIf { staleAccount },
-        "$TEXT_LOCALE\"${gameTextLocale(BROKEN_TEXT_LOCALE)}\"".takeIf { brokenText },
+        "$TEXT_LOCALE\"${gameTextLocale(BROKEN_TEXT_LOCALE)}\"".takeIf { brokenText && !wrongLocale },
+        textLine.takeIf { wrongLocale },
+        audioLine.takeIf { wrongLocale },
         WORK_OPTIMS_LINE.takeIf { missingWorkOptims },
     ) + staleResolutionKeys.map { "SET $it \"$screenSize\"" } + missingNarrator.map { "SET $it \"0\"" }
 }
 
-private const val ACCOUNT_LIST = "SET accountList "
+private const val ACCOUNT_LIST = app.gamenative.wow.product.GameAccounts.ACCOUNT_LIST
 private const val DEAD_PORTAL_LINE = "SET portal \"TW\""
 
 /**
@@ -1275,8 +1299,7 @@ private const val DEAD_PORTAL_LINE = "SET portal \"TW\""
  * as the one to log into. The game's other accounts are kept, and [account] is added if the game hasn't seen it.
  */
 internal fun accountListLine(existing: String?, account: String): String {
-    val names = existing?.substringAfter('"', "")?.substringBeforeLast('"', "")
-        ?.split('|')?.map { it.trim().removePrefix("!") }?.filter { it.isNotEmpty() }.orEmpty()
+    val names = app.gamenative.wow.product.GameAccounts.namesInLine(existing)
     val all = if (names.any { it.equals(account, ignoreCase = true) }) names else names + account
     return ACCOUNT_LIST + "\"" + all.joinToString("") { (if (it.equals(account, ignoreCase = true)) "!" else "") + it + "|" } + "\""
 }

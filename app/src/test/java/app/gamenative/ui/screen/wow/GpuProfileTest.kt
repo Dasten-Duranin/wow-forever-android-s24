@@ -74,4 +74,14 @@ class GpuProfileTest {
             graphicsDriverConfig(GpuProfile.XCLIPSE),
         )
     }
+
+    @Test
+    fun onlyTheAdreno722GetsTheDeviceDriverProfile() {
+        // Retroid Pocket Duo, issue #65.
+        assertTrue(isAdreno722("Adreno (TM) 722"))
+        assertFalse(isAdreno722("Adreno (TM) 720"))
+        assertFalse(isAdreno722("Adreno (TM) 740"))
+        assertFalse(isAdreno722("Adreno (TM) 7220"))
+        assertFalse(isAdreno722(""))
+    }
 }
