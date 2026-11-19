@@ -34,6 +34,20 @@ jobs:
       - name: Fetch runtime components
         run: tools/fetch_components.sh
 
+      - name: Build the browser-login helper
+        env:
+          LLVM_MINGW: llvm-mingw-20261104-ucrt-ubuntu-22.04-x86_64
+          LLVM_MINGW_SHA256: 919380403de87dca3c581c2053230cd298af5e891286628ba0613b7fed370926
+        run: |
+          # The helper runs next to the ARM64 game, so it is an ARM64 Windows program built with LLVM-MinGW.
+          curl -fsSL -o "$RUNNER_TEMP/llvm-mingw.tar.xz" \
+            "https://github.com/mstorsjo/llvm-mingw/releases/download/20261104/$LLVM_MINGW.tar.xz"
+          echo "$LLVM_MINGW_SHA256  $RUNNER_TEMP/llvm-mingw.tar.xz" | sha256sum -c -
+          tar -xJf "$RUNNER_TEMP/llvm-mingw.tar.xz" -C "$RUNNER_TEMP"
+          sh tools/wow-session-bridge/build.sh "$RUNNER_TEMP/$LLVM_MINGW/bin/aarch64-w64-mingw32-clang" \
+            app/src/main/assets/wow-session-bridge.exe
+          sha256sum app/src/main/assets/wow-session-bridge.exe
+
       - name: Number this build
         # Upstream's version plus the run number (1.0.3 -> 1.0.3.42), so every build is newer than the last.
         run: |
@@ -65,7 +79,7 @@ jobs:
           echo "SIGNED=1" >> "$GITHUB_ENV"
 
       - name: Build
-        run: ./gradlew --no-daemon testModernReleaseUnitTest --tests "app.gamenative.ui.screen.wow.GpuProfileTest" assembleModernRelease
+        run: ./gradlew --no-daemon testModernReleaseUnitTest --tests "app.gamenative.ui.screen.wow.GpuProfileTest" --tests "app.gamenative.ui.screen.wow.auth.*" assembleModernRelease
 
       - name: Prepare the APK
         run: |

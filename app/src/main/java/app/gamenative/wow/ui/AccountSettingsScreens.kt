@@ -107,6 +107,7 @@ fun AccountScreen(launcher: LauncherController, onBack: () -> Unit, onEditLogin:
                 if (launcher.hasSavedLogin) FwButton(stringResource(R.string.fw_forget_login), launcher::forgetLogin, kind = FwButtonKind.Danger)
             }
         }
+        BrowserLoginSection()
         GameAccountSection(launcher)
         BlockedLoginSection()
         FwSection(stringResource(R.string.fw_how_it_works)) {
@@ -115,6 +116,30 @@ fun AccountScreen(launcher: LauncherController, onBack: () -> Unit, onEditLogin:
                 style = Fw.Secondary,
             )
         }
+    }
+}
+
+/**
+ * Account, Browser login: sign in on Battle.net's own page and hand the game a launcher session, the way the
+ * Battle.net app does on a PC, instead of sending the password from the game. From wow-forever-android 2.4.5.
+ */
+@Composable
+private fun BrowserLoginSection() {
+    val context = LocalContext.current
+    var enabled by remember { mutableStateOf(app.gamenative.ui.screen.wow.auth.BattleNetBrowserLogin.enabled(context)) }
+    FwSection("Browser login") {
+        Text(
+            "Sign in on Battle.net's own page when the game starts, like the Battle.net app on a PC. Try it when the game refuses your password with BLZ51914400 while the same account works on a PC. Your saved password isn't used while this is on.",
+            style = Fw.Secondary,
+        )
+        FwButton(
+            if (enabled) "Browser login: On" else "Browser login: Off",
+            {
+                enabled = !enabled
+                app.gamenative.ui.screen.wow.auth.BattleNetBrowserLogin.setEnabled(context, enabled)
+            },
+            kind = if (enabled) FwButtonKind.Primary else FwButtonKind.Ghost,
+        )
     }
 }
 

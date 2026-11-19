@@ -1,6 +1,7 @@
 package app.gamenative.ui.screen.wow
 
 import android.content.Context
+import app.gamenative.ui.screen.wow.auth.BattleNetBrowserLogin
 import android.os.Build
 import android.os.Environment
 import android.view.WindowManager
@@ -99,6 +100,7 @@ fun WoWForeverScreen(
     var isLaunching by remember { mutableStateOf(false) }
     var launchJob by remember { mutableStateOf<Job?>(null) }
     var hasSavedLogin by remember { mutableStateOf(BattleNetSignIn.load(context) != null) }
+    var browserLogin by remember { mutableStateOf(BattleNetBrowserLogin.enabled(context)) }
     var showLoginDialog by remember { mutableStateOf(false) }
     var statusText by remember { mutableStateOf(READY_STATUS) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
@@ -605,6 +607,13 @@ fun WoWForeverScreen(
                         ) {
                             showLoginDialog = true
                         }
+                        LinkButton(
+                            text = if (browserLogin) "Browser login: On (experimental)" else "Browser login: Off",
+                            icon = Icons.Default.Key,
+                        ) {
+                            browserLogin = !browserLogin
+                            BattleNetBrowserLogin.setEnabled(context, browserLogin)
+                        }
                         if (hasSavedLogin) {
                             LinkButton("Forget Saved Login", Icons.Default.Delete) {
                                 BattleNetSignIn.forget(context)
@@ -612,6 +621,16 @@ fun WoWForeverScreen(
                                 hasSavedLogin = false
                             }
                         }
+                    }
+                    // Browser login never uses the saved password, but it stays stored until the user removes it (#97).
+                    if (browserLogin && hasSavedLogin) {
+                        Text(
+                            text = "Browser login doesn't use your saved password, which stays on this device until you tap Forget Login.",
+                            fontSize = 11.sp,
+                            color = WowSubtle,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(top = 6.dp),
+                        )
                     }
                 }
             }
@@ -1039,9 +1058,14 @@ internal fun prepareLaunch(
     }
 
     val arm64Exe = File(gameRoot, "${product.flavorDir}/${product.armExe}")
-    BattleNetSignIn.load(context)?.let { login ->
-        BattleNetSignIn.writeLoginFile(gameRoot, product, login)
-        BattleNetSignIn.startLoginWatcher(gameRoot, product)
+    if (app.gamenative.ui.screen.wow.auth.BattleNetBrowserLogin.enabled(context)) {
+        // Browser login hands the game a launcher session; even an empty login.txt would select the password path.
+        BattleNetSignIn.removeLoginFile(gameRoot)
+    } else {
+        BattleNetSignIn.load(context)?.let { login ->
+            BattleNetSignIn.writeLoginFile(gameRoot, product, login)
+            BattleNetSignIn.startLoginWatcher(gameRoot, product)
+        }
     }
     if (!arm64Exe.exists()) {
         try {
