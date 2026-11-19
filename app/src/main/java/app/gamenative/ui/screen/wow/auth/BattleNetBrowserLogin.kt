@@ -69,11 +69,11 @@ internal object BattleNetBrowserLogin {
             ?: throw IOException("Cannot locate the game drive for browser login")
         // Foreverywhere installs several products side by side; sign in for the one the game folder runs.
         val product = detectProduct(gameRoot) ?: WowProduct.FOREVER
-        val active = BuildInfo.read(gameRoot)?.active(product)
-        val build = active
+        val installed = BuildInfo.read(gameRoot)?.active(product)
+        val build = installed
             ?.get("Version")?.substringAfterLast('.')?.toIntOrNull()?.takeIf { it > 0 }
             ?: throw IOException("Cannot read the installed game build for browser login")
-        val portal = GameRegions.effective(active?.get("Branch")).portal
+        val portal = GameRegions.effective(installed?.get("Branch")).portal
         BattleNetSignIn.removeLoginFile(gameRoot)
         check(!File(gameRoot, "${product.flavorDir}/login.txt").exists()) {
             "Remove the old login.txt before using browser login"
