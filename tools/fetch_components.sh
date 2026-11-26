@@ -10,6 +10,7 @@ FILES=(
     turnip-wow-scheduler-test.zip
     turnip-V32-RP6sched.zip
     radv-xclipse-26.3.0-devel-xd-4f88558.zip
+    radv-xclipse-27.0.0-devel-269238e.zip
 )
 
 mkdir -p "$DEST"
@@ -20,7 +21,9 @@ for f in "${FILES[@]}"; do
         cp "$1/$f" "$DEST/$f"
         echo "copied $f"
     else
-        if [ "$f" = "radv-xclipse-26.3.0-devel-xd-4f88558.zip" ]; then
+        if [ "$f" = "radv-xclipse-27.0.0-devel-269238e.zip" ]; then
+            curl -fL --retry 3 -o "$DEST/$f.part" "https://github.com/JimVulkan/radv-xclipse/releases/download/v1.8.0/$f"
+        elif [ "$f" = "radv-xclipse-26.3.0-devel-xd-4f88558.zip" ]; then
             curl -fL --retry 3 -o "$DEST/$f.part" "https://github.com/aaditya-v-more/xclipse-driver/releases/download/v0.1.0/$f"
         elif [ "$f" = "turnip-V32-RP6sched.zip" ]; then
             curl -fL --retry 3 -o "$DEST/$f.part" "https://raw.githubusercontent.com/arusiasotto/wow-forever-a840/main/driver/turnip-V32-RP6sched.zip"

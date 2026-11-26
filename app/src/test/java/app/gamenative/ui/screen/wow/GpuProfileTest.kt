@@ -84,4 +84,12 @@ class GpuProfileTest {
         assertFalse(isAdreno722("Adreno (TM) 7220"))
         assertFalse(isAdreno722(""))
     }
+
+    @Test
+    fun xclipseRadv18KeepsTheXclipseSetupOnItsOwnDriver() {
+        assertEquals(
+            "version=RADV-Xclipse-JV-1.8.0-269238e,adrenotoolsTurnip=1,resourceType=buffer,bcnEmulation=none,quality=high,maxDeviceMemory=512",
+            graphicsDriverConfig(GpuProfile.XCLIPSE_JV),
+        )
+    }
 }

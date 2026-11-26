@@ -907,6 +907,7 @@ internal fun Throwable.isPermissionDenied() =
 private const val DEFAULT_DRIVER = "Turnip-WoW-scheduler-test"
 private const val ADRENO_8XX_DRIVER = "Turnip-V32-RP6sched"
 private const val XCLIPSE_DRIVER = "RADV-Xclipse-xd-4f88558"
+private const val XCLIPSE_JV_DRIVER = "RADV-Xclipse-JV-1.8.0-269238e"
 
 private const val PROTON_VERSION = "proton-11.0-90624-arm64ec"
 private const val DXVK_VERSION = "2.4.1-wow-aarch64-test"
@@ -946,7 +947,14 @@ internal data class GpuProfile(
         val ADRENO_722 = GpuProfile("System", "", "1280x720", "Adreno 722", "Adreno 722")
 
         /** Every profile, in the order Settings lists them. */
-        val ALL = listOf(ADRENO_740, ADRENO_8XX, ADRENO_722, XCLIPSE, QUEST)
+        /**
+         * The same Xclipse setup on JimVulkan's RADV Xclipse v1.8.0 (Mesa 27.0.0-devel), picked by hand in Settings
+         * to compare: BC4 textures take a third of the memory and BC6H/BC7 load about twice as fast. Not tested with
+         * WoW yet.
+         */
+        val XCLIPSE_JV = XCLIPSE.copy(driver = XCLIPSE_JV_DRIVER, label = "Xclipse 940 (RADV 1.8)", edition = "Exynos 2400 / Xclipse 940, RADV 1.8 (test)")
+
+        val ALL = listOf(ADRENO_740, ADRENO_8XX, ADRENO_722, XCLIPSE, XCLIPSE_JV, QUEST)
 
         /** The profile picked in Settings, or the one detected for this device. */
         fun detect(context: Context): GpuProfile =
@@ -1349,6 +1357,7 @@ private fun installBundledComponents(context: Context, onStatus: (String) -> Uni
     installDriver(context, DEFAULT_DRIVER, "turnip-wow-scheduler-test.zip", onStatus)
     installDriver(context, ADRENO_8XX_DRIVER, "turnip-V32-RP6sched.zip", onStatus)
     installDriver(context, XCLIPSE_DRIVER, "radv-xclipse-26.3.0-devel-xd-4f88558.zip", onStatus)
+    installDriver(context, XCLIPSE_JV_DRIVER, "radv-xclipse-27.0.0-devel-269238e.zip", onStatus)
 
     val protonDir = File(ImageFs.getSharedProtonDir(context), PROTON_VERSION)
     if (!File(protonDir, "profile.json").exists() || !File(protonDir, "bin/wine").exists()) {
